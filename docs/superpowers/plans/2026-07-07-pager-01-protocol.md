@@ -316,7 +316,7 @@ export type EventDraft = z.infer<typeof EventDraft>;
 - [ ] **Step 6: 跑测试确认通过**
 
 Run: `npm test -w packages/protocol`
-Expected: PASS，11 个用例全绿。
+Expected: PASS，10 个用例全绿。
 
 - [ ] **Step 7: 确认 tsc 能编译**
 

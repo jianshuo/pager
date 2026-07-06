@@ -59,6 +59,11 @@
 - **status**：`{ state: "thinking|running|waiting_input|done|failed", note?: "..." }`。驱动会话列表状态点和推送文案。
 - **error**：`{ message, recoverable: bool }`。
 
+### 终审补充决策（2026-07-07，01-protocol 落地时定）
+
+- **前向兼容通道**：daemon（git pull 秒更）和 hub（wrangler 部署）演进速度不同，hub 的存储/转发路径不得拒绝新 daemon 发来的未知事件类型。协议包额外导出 `EventLoose` / `EventDraftLoose`（envelope 严格、type/body 不设限），hub 存转用宽松信封，客户端对未知 type 做通用卡片降级（见第 4 节）。`DaemonHello` 携带 `proto` 协议版本号，供 hub 检测失配。
+- **机器上下线广播**：`HubToClient` 增加 `machine_status` 消息（`{ machine, online }`），支撑首页机器在线横条的实时更新，不靠轮询 /api/machines。
+
 ### 推送规则（Worker 端裁决）
 
 - `permission_request` → 高优先级、带「允许/拒绝」action 按钮的可交互推送。
