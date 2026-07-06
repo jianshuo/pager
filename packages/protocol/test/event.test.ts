@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Event, EventDraft } from "../src/event.js";
+import { Event, EventDraft, EventLoose, EventDraftLoose } from "../src/event.js";
 
 const validText = {
   id: "evt_1",
@@ -78,5 +78,25 @@ describe("EventDraft", () => {
   it("Event 缺 seq 应报错（与 Draft 的区别）", () => {
     const { seq, ...draft } = validText;
     expect(() => Event.parse(draft)).toThrow();
+  });
+
+  // hub 会重新盖 seq，静默剥离是预期行为——即使上行携带了 seq 也不应保留
+  it("EventDraft 静默剥离多余的 seq 字段（预期行为，非 bug）", () => {
+    expect(EventDraft.parse(validText)).not.toHaveProperty("seq");
+  });
+});
+
+describe("EventLoose / EventDraftLoose", () => {
+  it("EventLoose 放行未知 type，Event 拒绝同一份数据", () => {
+    const unknown = { ...validText, type: "voice_note", body: { url: "x" } };
+    expect(EventLoose.parse(unknown).type).toBe("voice_note");
+    expect(() => Event.parse(unknown)).toThrow();
+  });
+
+  it("EventDraftLoose 放行未知 type 且无需 seq，EventDraft 拒绝同一份数据", () => {
+    const { seq, ...draft } = validText;
+    const unknown = { ...draft, type: "voice_note", body: { url: "x" } };
+    expect(EventDraftLoose.parse(unknown).type).toBe("voice_note");
+    expect(() => EventDraft.parse(unknown)).toThrow();
   });
 });

@@ -17,7 +17,7 @@ export const ConversationSummary = z.object({
   state: StatusState,
   lastMessage: z.string(),
   lastSeq: z.number().int().nonnegative(),
-  updatedAt: z.number().int(),
+  updatedAt: z.number().int(), // epoch 秒
 });
 export type ConversationSummary = z.infer<typeof ConversationSummary>;
 

@@ -58,7 +58,7 @@ const base = {
   id: z.string().startsWith("evt_"),
   conv: z.string().startsWith("cnv_"),
   seq: z.number().int().nonnegative(),
-  ts: z.number().int().positive(),
+  ts: z.number().int().positive(), // epoch 秒
   role: Role,
   agent: z.string().default("claude-code"),
 };
@@ -90,3 +90,11 @@ export const EventDraft = z.discriminatedUnion("type", [
   draftVariant("error", ErrorBody),
 ]);
 export type EventDraft = z.infer<typeof EventDraft>;
+
+// 中枢存储/转发用的宽松信封：envelope 严格校验，type/body 不设限——
+// 新 daemon 先行加事件类型时，旧 hub 照存照转，由客户端做通用卡片降级（spec §4）
+export const EventLoose = z.object({ ...base, type: z.string(), body: z.unknown() });
+export type EventLoose = z.infer<typeof EventLoose>;
+
+export const EventDraftLoose = z.object({ ...draftBase, type: z.string(), body: z.unknown() });
+export type EventDraftLoose = z.infer<typeof EventDraftLoose>;

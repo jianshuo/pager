@@ -25,6 +25,7 @@ describe("DaemonToHub", () => {
       machine: { id: "mch_mac", name: "建硕的 Mac" },
       dirs: ["/Users/jianshuo/code/pager"],
       maxConcurrent: 4,
+      proto: 1,
     };
     expect(DaemonToHub.parse(msg).kind).toBe("hello");
   });
@@ -33,7 +34,7 @@ describe("DaemonToHub", () => {
     expect(DaemonToHub.parse({ kind: "event", event: draftText }).kind).toBe("event");
   });
 
-  it("拒绝 event 携带已盖 seq 的事件之外的脏数据", () => {
+  it("拒绝 event 携带未知 type 的事件", () => {
     expect(() =>
       DaemonToHub.parse({ kind: "event", event: { ...draftText, type: "nope" } })
     ).toThrow();
@@ -100,5 +101,14 @@ describe("HubToClient", () => {
     expect(
       HubToClient.parse({ kind: "patch", conv: "cnv_1", eventId: "evt_1", markdown: "x" }).kind
     ).toBe("patch");
+  });
+
+  it("解析 machine_status 广播", () => {
+    const msg = {
+      kind: "machine_status",
+      machine: { id: "mch_mac", name: "Mac" },
+      online: false,
+    };
+    expect(HubToClient.parse(msg).kind).toBe("machine_status");
   });
 });
