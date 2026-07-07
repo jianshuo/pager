@@ -115,6 +115,28 @@ struct EventDraft: Encodable {
     let type: String; let body: [String: JSONValue]
 }
 
+extension Event {
+    /// Memberwise-style initializer for constructing patched copies. `init(from:)` above is a
+    /// custom Decodable initializer, so Swift does not synthesize a memberwise init for us.
+    init(id: String, conv: String, seq: Int, ts: Int, role: String, agent: String, type: String, body: EventBody) {
+        self.id = id
+        self.conv = conv
+        self.seq = seq
+        self.ts = ts
+        self.role = role
+        self.agent = agent
+        self.type = type
+        self.body = body
+    }
+
+    /// Applies a `patch` frame: hub patches replace (not append to) a text event's markdown
+    /// in place. Returns `self` unchanged if this event isn't a `.text` event.
+    func withPatchedText(_ markdown: String) -> Event {
+        guard case .text = body else { return self }
+        return Event(id: id, conv: conv, seq: seq, ts: ts, role: role, agent: agent, type: type, body: .text(markdown: markdown))
+    }
+}
+
 // 客户端 → hub
 enum ClientMessage: Encodable {
     case subscribe(conv: String, afterSeq: Int)
