@@ -8,6 +8,7 @@ interface RunnerConfig {
   maxConcurrent: number;
   permissionTimeoutSec: number;
   permissionMode: string;
+  dirs: string[];
 }
 
 interface ConvRuntime {
@@ -21,11 +22,17 @@ interface QueuedStart {
   prompt: string;
 }
 
+interface PendingPermission {
+  conv: string;
+  resolve: (choice: PermissionChoice) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class Runner {
   private convs = new Map<string, ConvRuntime>();
   private active = 0;
   private startQueue: QueuedStart[] = [];
-  private pendingPermissions = new Map<string, (choice: PermissionChoice) => void>();
+  private pendingPermissions = new Map<string, PendingPermission>();
 
   constructor(
     private cfg: RunnerConfig,
@@ -37,6 +44,10 @@ export class Runner {
   handle(msg: HubToDaemon): void {
     switch (msg.kind) {
       case "task": {
+        if (!this.cfg.dirs.includes(msg.dir)) {
+          this.emitStatus(msg.conv, "failed", `目录不在白名单：${msg.dir}`);
+          return;
+        }
         this.store.set(msg.conv, { dir: msg.dir });
         const prompt = msg.event.type === "text" ? (msg.event.body as { markdown: string }).markdown : "";
         this.requestStart(msg.conv, prompt);
@@ -46,10 +57,11 @@ export class Runner {
         const ev = msg.event as { type: string; body: unknown };
         if (ev.type === "permission_response") {
           const body = ev.body as { request_id: string; choice: PermissionChoice };
-          const resolve = this.pendingPermissions.get(body.request_id);
-          if (resolve) {
+          const entry = this.pendingPermissions.get(body.request_id);
+          if (entry) {
             this.pendingPermissions.delete(body.request_id);
-            resolve(body.choice);
+            clearTimeout(entry.timer);
+            entry.resolve(body.choice);
           }
           return;
         }
@@ -57,24 +69,44 @@ export class Runner {
           const state = this.store.get(msg.conv);
           if (!state?.dir) return; // 未知 conv：容忍丢弃
           const md = (ev.body as { markdown: string }).markdown;
-          const rt = this.convs.get(msg.conv);
-          if (rt?.running) rt.followups.push(md);
-          else this.requestStart(msg.conv, md);
+          this.requestStart(msg.conv, md);
         }
         break;
       }
-      case "interrupt":
+      case "interrupt": {
         this.convs.get(msg.conv)?.interrupt?.();
+        // 打断该 conv 时一并清掉它挂起的权限等待，避免过期计时器之后再冒出一条状态
+        for (const [reqId, entry] of [...this.pendingPermissions]) {
+          if (entry.conv === msg.conv) {
+            clearTimeout(entry.timer);
+            this.pendingPermissions.delete(reqId);
+            entry.resolve("deny");
+          }
+        }
         break;
+      }
     }
   }
 
+  // 唯一的起跑准入口：conv 是否已在跑 / 是否已排队 / 并发是否有空位，都在这里一次判定
   private requestStart(conv: string, prompt: string): void {
-    if (this.active >= this.cfg.maxConcurrent) {
-      this.startQueue.push({ conv, prompt });
-      this.emitStatus(conv, "thinking", `排队中（${this.startQueue.length} 个任务在前面）`);
+    let rt = this.convs.get(conv);
+    if (!rt) {
+      rt = { running: false, followups: [] };
+      this.convs.set(conv, rt);
+    }
+
+    if (rt.running || this.startQueue.some((q) => q.conv === conv)) {
+      rt.followups.push(prompt);
       return;
     }
+
+    if (this.active >= this.cfg.maxConcurrent) {
+      this.startQueue.push({ conv, prompt });
+      this.emitStatus(conv, "thinking", `排队中（${this.startQueue.length - 1} 个任务在前面）`);
+      return;
+    }
+
     this.start(conv, prompt);
   }
 
@@ -82,8 +114,12 @@ export class Runner {
     const state = this.store.get(conv);
     if (!state?.dir) return;
     this.active++;
-    const rt: ConvRuntime = { running: true, followups: [] };
-    this.convs.set(conv, rt);
+    let rt = this.convs.get(conv);
+    if (!rt) {
+      rt = { running: false, followups: [] };
+      this.convs.set(conv, rt);
+    }
+    rt.running = true;
 
     const handle = this.adapter.run({
       conv,
@@ -119,10 +155,7 @@ export class Runner {
         this.emitStatus(conv, "running", `权限请求超时（${this.cfg.permissionTimeoutSec}s），已自动拒绝：${req.description}`);
         resolve("deny");
       }, this.cfg.permissionTimeoutSec * 1000);
-      this.pendingPermissions.set(req.request_id, (choice) => {
-        clearTimeout(timer);
-        resolve(choice);
-      });
+      this.pendingPermissions.set(req.request_id, { conv, resolve, timer });
     });
   }
 

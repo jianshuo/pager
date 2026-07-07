@@ -36,6 +36,7 @@ const runner = new Runner(
     maxConcurrent: cfg.maxConcurrent,
     permissionTimeoutSec: cfg.permissionTimeoutSec,
     permissionMode: cfg.permissionMode,
+    dirs: cfg.dirs,
   },
   createClaudeCodeAdapter(),
   store,

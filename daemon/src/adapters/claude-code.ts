@@ -84,6 +84,7 @@ async function runLoop(opts: RunOptions, queryFn: typeof query, abort: AbortCont
 
   let textId: string | null = null;
   let textBuf = "";
+  let textStarted = false;
   let lastPatch = 0;
   const pendingTools = new Map<string, { name: string; input: any }>();
 
@@ -101,11 +102,17 @@ async function runLoop(opts: RunOptions, queryFn: typeof query, abort: AbortCont
       case "stream_event": {
         const ev = msg.event;
         if (ev?.type === "content_block_start" && ev.content_block?.type === "text") {
+          // 惰性：先只分配 id/重置缓冲，真正发 text 事件要等第一个 delta 到来，
+          // 这样一个从未产生内容的文本块不会留下空气泡。
           textId = newId("evt");
           textBuf = "";
+          textStarted = false;
           lastPatch = 0;
-          opts.emit({ kind: "event", event: draft(opts.conv, "text", { markdown: "" }, textId) });
         } else if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && textId) {
+          if (!textStarted) {
+            textStarted = true;
+            opts.emit({ kind: "event", event: draft(opts.conv, "text", { markdown: "" }, textId) });
+          }
           textBuf += ev.delta.text;
           if (Date.now() - lastPatch >= 400) {
             lastPatch = Date.now();

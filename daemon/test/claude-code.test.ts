@@ -91,6 +91,36 @@ describe("claude-code adapter（fixture 回放）", () => {
     expect(pr).toBeTruthy();
   });
 
+  it("空文本块（无 delta）不应发出空气泡 text 事件", async () => {
+    const adapter = createClaudeCodeAdapter((() =>
+      (async function* () {
+        yield { type: "system", subtype: "init", session_id: "s-empty" };
+        // 文本块开始又立刻结束，中间一个 text_delta 都没有
+        yield { type: "stream_event", event: { type: "content_block_start", content_block: { type: "text" } } };
+        yield { type: "stream_event", event: { type: "content_block_stop" } };
+        yield { type: "result", subtype: "success", is_error: false };
+      })()) as any);
+    const emitted: any[] = [];
+    const handle = adapter.run({
+      conv: "cnv_empty",
+      dir: "/tmp",
+      prompt: "t",
+      permissionMode: "default",
+      emit: (m) => emitted.push(m),
+      requestPermission: async () => "allow",
+    });
+    await handle.done;
+
+    const textEvents = emitted.filter((m) => m.kind === "event" && m.event.type === "text");
+    expect(textEvents.length).toBe(0);
+    const patches = emitted.filter((m) => m.kind === "patch");
+    expect(patches.length).toBe(0);
+
+    // 但一个正常的 done 状态仍应发出
+    const statuses = emitted.filter((m) => m.kind === "event" && m.event.type === "status").map((m) => m.event.body.state);
+    expect(statuses[statuses.length - 1]).toBe("done");
+  });
+
   it("SDK 异常 → status failed（不 throw 出去）", async () => {
     const adapter = createClaudeCodeAdapter((() =>
       (async function* () {

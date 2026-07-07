@@ -36,12 +36,17 @@ const task = (conv: string, dir = "/proj") => ({
   kind: "task" as const, conv, dir, agent: "claude-code", event: textEvent(conv, "do it"),
 });
 
-function make(cfg: Partial<{ maxConcurrent: number; permissionTimeoutSec: number }> = {}) {
+function make(cfg: Partial<{ maxConcurrent: number; permissionTimeoutSec: number; dirs: string[] }> = {}) {
   const { adapter, runs } = fakeAdapter();
   const sent: any[] = [];
   const store = makeStore();
   const runner = new Runner(
-    { maxConcurrent: cfg.maxConcurrent ?? 2, permissionTimeoutSec: cfg.permissionTimeoutSec ?? 3600, permissionMode: "default" },
+    {
+      maxConcurrent: cfg.maxConcurrent ?? 2,
+      permissionTimeoutSec: cfg.permissionTimeoutSec ?? 3600,
+      permissionMode: "default",
+      dirs: cfg.dirs ?? ["/proj"],
+    },
     adapter, store, (m) => sent.push(m)
   );
   return { runner, runs, sent, store };
@@ -124,5 +129,75 @@ describe("Runner", () => {
     expect(runs[1].interrupted).toBe(false);
     runner.handle({ kind: "interrupt", conv: "cnv_ghost" }); // 不炸
     runner.handle({ kind: "user_event", conv: "cnv_ghost", event: textEvent("cnv_ghost", "?") as any }); // 无 dir，丢弃不炸
+  });
+
+  it("排队中（尚未起跑）的 conv 来追加消息：起跑时只跑一次，追加作为续跑，不产生第二条并发", async () => {
+    const { runner, runs } = make({ maxConcurrent: 1 });
+    runner.handle(task("cnv_1")); // 占住唯一并发位
+    runner.handle(task("cnv_2")); // 进 startQueue，此时没有 running 的 ConvRuntime
+    await tick();
+    expect(runs.length).toBe(1);
+
+    // cnv_2 还在排队时又来一条追加消息——老代码会误判为"未在跑"直接再起一条并发
+    runner.handle({ kind: "user_event", conv: "cnv_2", event: textEvent("cnv_2", "追加X") as any });
+    await tick();
+    expect(runs.length).toBe(1); // 追加消息不应立刻产生第二条并发跑
+
+    runs[0].finish(); // 释放并发位，cnv_2 该起跑了
+    await tick();
+    expect(runs.length).toBe(2);
+    expect(runs[1].opts.conv).toBe("cnv_2");
+    expect(runs[1].opts.prompt).toBe("do it"); // 先跑原始 task，不是追加的那条
+
+    runs[1].finish(); // cnv_2 第一次运行结束 → 续跑追加消息
+    await tick();
+    expect(runs.length).toBe(3);
+    expect(runs[2].opts.conv).toBe("cnv_2");
+    expect(runs[2].opts.prompt).toBe("追加X");
+  });
+
+  it("同一 conv 收到重复 task（仍在跑）：排队续跑，不产生第二条并发", async () => {
+    const { runner, runs } = make({ maxConcurrent: 2 });
+    runner.handle(task("cnv_1"));
+    await tick();
+    expect(runs.length).toBe(1);
+
+    runner.handle(task("cnv_1")); // 重复 task，同一 conv 仍在跑
+    await tick();
+    expect(runs.length).toBe(1); // 没有多起一条并发（active 仍占 1 个位）
+
+    runs[0].finish();
+    await tick();
+    expect(runs.length).toBe(2); // 结束后续跑那条排队的重复 task
+    expect(runs[1].opts.conv).toBe("cnv_1");
+  });
+
+  it("dir 不在白名单：daemon 自校验拒绝，不起跑，发 failed 状态", async () => {
+    const { runner, runs, sent } = make({ dirs: ["/proj"] });
+    runner.handle(task("cnv_x", "/evil"));
+    await tick();
+    expect(runs.length).toBe(0);
+    const failed = sent.find((m) => m.kind === "event" && m.event.conv === "cnv_x" && m.event.type === "status");
+    expect(failed?.event.body.state).toBe("failed");
+    expect(failed?.event.body.note).toContain("/evil");
+  });
+
+  it("interrupt 清掉该 conv 挂起的权限等待：立即 deny，超时计时器不再迟发状态", async () => {
+    vi.useFakeTimers();
+    const { runner, runs, sent } = make({ permissionTimeoutSec: 5 });
+    runner.handle(task("cnv_1"));
+    await vi.advanceTimersByTimeAsync(10);
+
+    const p = runs[0].opts.requestPermission({ request_id: "req_z", tool: "Bash", description: "x", options: ["allow", "deny"] });
+    runner.handle({ kind: "interrupt", conv: "cnv_1" });
+    await expect(p).resolves.toBe("deny");
+
+    const before = sent.length;
+    await vi.advanceTimersByTimeAsync(5_100); // 越过原本的超时窗口
+    const lateTimeout = sent
+      .slice(before)
+      .find((m) => m.kind === "event" && m.event.type === "status" && m.event.body.note?.includes("超时"));
+    expect(lateTimeout).toBeUndefined();
+    vi.useRealTimers();
   });
 });

@@ -25,10 +25,11 @@ afterEach(() => {
 function fakeHub() {
   const wss = new WebSocketServer({ port: 0 });
   servers.push(wss);
-  const state: { sockets: ServerSocket[]; received: any[]; headers: any[] } = { sockets: [], received: [], headers: [] };
+  const state: { sockets: ServerSocket[]; received: any[]; headers: any[]; urls: string[] } = { sockets: [], received: [], headers: [], urls: [] };
   wss.on("connection", (socket, req) => {
     state.sockets.push(socket);
     state.headers.push(req.headers);
+    state.urls.push(req.url ?? "");
     socket.on("message", (d) => state.received.push(JSON.parse(d.toString())));
   });
   const port = (wss.address() as AddressInfo).port;
@@ -52,6 +53,7 @@ describe("HubClient", () => {
     c.connect();
     await until(() => got.opened === 1);
     expect(hub.state.headers[0].authorization).toBe("Bearer tok");
+    expect(hub.state.urls[0]).toContain("machine=mch_t");
     c.send({ kind: "patch", conv: "cnv_1", eventId: "evt_1", markdown: "hi" });
     await until(() => hub.state.received.length === 1);
     expect(hub.state.received[0].kind).toBe("patch");
