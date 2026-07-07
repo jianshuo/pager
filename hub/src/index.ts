@@ -50,6 +50,8 @@ export default {
         return user(env).fetch("https://do/conversations");
       if (url.pathname === "/api/conversations" && req.method === "POST")
         return await newConversation(env, await req.json());
+      if (url.pathname === "/api/rooms" && req.method === "POST")
+        return await newRoom(env, await req.json());
       if (url.pathname === "/api/permission-response" && req.method === "POST")
         return await permissionResponse(env, await req.json());
       if (url.pathname === "/api/register-device" && req.method === "POST") {
@@ -126,6 +128,28 @@ async function newConversation(env: Env, raw: unknown): Promise<Response> {
     return Response.json({ error: "daemon went offline" }, { status: 502 });
   }
   return Response.json(NewConversationResponse.parse({ id: conv }), { status: 201 });
+}
+
+// 人对人聊天房间：一个没有机器/daemon 的会话。两个人订阅同一个 conv、互发 text，
+// 靠 UserDO 广播互相看到。machineName 复用为房间标题。
+async function newRoom(env: Env, raw: unknown): Promise<Response> {
+  const title = typeof (raw as { title?: unknown })?.title === "string"
+    ? (raw as { title: string }).title.trim()
+    : "";
+  if (!title) return Response.json({ error: "title required" }, { status: 400 });
+  const conv = newId("cnv");
+  const convStub = env.CONVERSATION.get(env.CONVERSATION.idFromName(conv));
+  const initRes = await convStub.fetch("https://do/init", {
+    method: "POST",
+    body: JSON.stringify({ machineId: "", machineName: title, dir: "" }),
+  });
+  if (!initRes.ok) return Response.json({ error: "failed to create room" }, { status: 500 });
+  // 立刻登记进会话索引，无消息也能出现在列表
+  await user(env).fetch("https://do/room", {
+    method: "POST",
+    body: JSON.stringify({ conv, title }),
+  });
+  return Response.json({ id: conv }, { status: 201 });
 }
 
 async function permissionResponse(env: Env, raw: unknown): Promise<Response> {

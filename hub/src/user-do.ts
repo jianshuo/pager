@@ -57,6 +57,20 @@ export class UserDO extends DurableObject<Env> {
       }
       case "POST /machine-status":
         return this.machineStatus(await req.json());
+      case "POST /room": {
+        // 人对人房间：machineId 空，machineName 存房间标题，立刻进会话索引（无消息也可见）
+        const r = await req.json<{ conv: string; title: string }>();
+        const now = Math.floor(Date.now() / 1000);
+        this.sql.exec(
+          `INSERT INTO conversations (id, machineId, machineName, dir, state, lastMessage, lastSeq, updatedAt)
+           VALUES (?, '', ?, '', 'idle', '', 0, ?)
+           ON CONFLICT(id) DO UPDATE SET machineName = excluded.machineName, updatedAt = excluded.updatedAt`,
+          r.conv,
+          r.title,
+          now
+        );
+        return Response.json({ ok: true });
+      }
       case "POST /register-device": {
         const { deviceToken } = await req.json<{ deviceToken: string }>();
         this.sql.exec(
@@ -201,10 +215,15 @@ export class UserDO extends DurableObject<Env> {
       });
       if (!sealedRes.ok) return;
       const sealed = await sealedRes.json();
-      await this.env.MACHINE.get(this.env.MACHINE.idFromName(row.machineId as string)).fetch(
-        "https://do/deliver",
-        { method: "POST", body: JSON.stringify({ kind: "user_event", conv: msg.conv, event: sealed }) }
-      );
+      // 人对人房间（machineId 为空）：ingest+广播即可，没有 daemon 要投递；
+      // 机器会话才把消息转给对应 daemon。
+      const machineId = (row.machineId as string) ?? "";
+      if (machineId) {
+        await this.env.MACHINE.get(this.env.MACHINE.idFromName(machineId)).fetch(
+          "https://do/deliver",
+          { method: "POST", body: JSON.stringify({ kind: "user_event", conv: msg.conv, event: sealed }) }
+        );
+      }
     }
   }
 

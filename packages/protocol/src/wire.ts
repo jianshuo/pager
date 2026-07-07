@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Event, EventDraft } from "./event.js";
+import { Event, EventDraft, EventDraftLoose } from "./event.js";
 
 // ---------- daemon → hub ----------
 
@@ -93,7 +93,9 @@ export type ClientSubscribe = z.infer<typeof ClientSubscribe>;
 export const ClientSend = z.object({
   kind: z.literal("send"),
   conv: z.string(),
-  event: EventDraft, // text 或 permission_response
+  // 宽松信封：body 里的额外字段（如人对人房间消息的 author）不被 strip，
+  // 前向兼容随客户端演进新增的字段。envelope 仍严格校验。
+  event: EventDraftLoose,
 });
 export type ClientSend = z.infer<typeof ClientSend>;
 
