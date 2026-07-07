@@ -21,6 +21,8 @@ export class UserDO extends DurableObject<Env> {
         updatedAt INTEGER NOT NULL
       )`
     );
+    // kind: 'machine'（1:1 看机器，每条都发给 daemon）| 'room'（人对人房间，只有 @AI 才派给 daemon）
+    try { this.sql.exec("ALTER TABLE conversations ADD COLUMN kind TEXT NOT NULL DEFAULT 'machine'"); } catch { /* 已存在 */ }
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS machines (
         id TEXT PRIMARY KEY,
@@ -58,15 +60,17 @@ export class UserDO extends DurableObject<Env> {
       case "POST /machine-status":
         return this.machineStatus(await req.json());
       case "POST /room": {
-        // 人对人房间：machineId 空，machineName 存房间标题，立刻进会话索引（无消息也可见）
-        const r = await req.json<{ conv: string; title: string }>();
+        // 人对人房间：machineName 存标题；可选绑定 machineId+dir 作为 AI 工作区（@AI 时派活）
+        const r = await req.json<{ conv: string; title: string; machineId?: string; dir?: string }>();
         const now = Math.floor(Date.now() / 1000);
         this.sql.exec(
-          `INSERT INTO conversations (id, machineId, machineName, dir, state, lastMessage, lastSeq, updatedAt)
-           VALUES (?, '', ?, '', 'idle', '', 0, ?)
-           ON CONFLICT(id) DO UPDATE SET machineName = excluded.machineName, updatedAt = excluded.updatedAt`,
+          `INSERT INTO conversations (id, machineId, machineName, dir, state, lastMessage, lastSeq, updatedAt, kind)
+           VALUES (?, ?, ?, ?, 'idle', '', 0, ?, 'room')
+           ON CONFLICT(id) DO UPDATE SET machineName = excluded.machineName, machineId = excluded.machineId, dir = excluded.dir, updatedAt = excluded.updatedAt`,
           r.conv,
+          r.machineId ?? "",
           r.title,
+          r.dir ?? "",
           now
         );
         return Response.json({ ok: true });
@@ -207,7 +211,7 @@ export class UserDO extends DurableObject<Env> {
       return;
     }
     if (msg.kind === "send") {
-      const row = [...this.sql.exec("SELECT machineId FROM conversations WHERE id = ?", msg.conv)][0];
+      const row = [...this.sql.exec("SELECT machineId, dir, kind FROM conversations WHERE id = ?", msg.conv)][0];
       if (!row) return;
       const sealedRes = await this.conv(msg.conv).fetch("https://do/ingest", {
         method: "POST",
@@ -215,14 +219,26 @@ export class UserDO extends DurableObject<Env> {
       });
       if (!sealedRes.ok) return;
       const sealed = await sealedRes.json();
-      // 人对人房间（machineId 为空）：ingest+广播即可，没有 daemon 要投递；
-      // 机器会话才把消息转给对应 daemon。
       const machineId = (row.machineId as string) ?? "";
-      if (machineId) {
-        await this.env.MACHINE.get(this.env.MACHINE.idFromName(machineId)).fetch(
-          "https://do/deliver",
-          { method: "POST", body: JSON.stringify({ kind: "user_event", conv: msg.conv, event: sealed }) }
-        );
+      const kind = (row.kind as string) ?? "machine";
+      const ev = msg.event as { type?: string; body?: { markdown?: string } };
+      const text = ev.type === "text" && typeof ev.body?.markdown === "string" ? ev.body.markdown : "";
+
+      if (kind === "room") {
+        // 人对人房间：消息已 ingest+广播给所有人。只有 @百姓AI/@AI 且房间绑了机器时，
+        // 才把这句话作为一个 task 派给 daemon——AI 在房间目录里干活，事件流回同一条时间线（3A）。
+        if (machineId && mentionsAI(text)) {
+          await this.env.MACHINE.get(this.env.MACHINE.idFromName(machineId)).fetch("https://do/deliver", {
+            method: "POST",
+            body: JSON.stringify({ kind: "task", conv: msg.conv, dir: row.dir as string, agent: "claude-code", event: sealed }),
+          });
+        }
+      } else if (machineId) {
+        // 机器会话：每条用户消息都转给 daemon（续聊）
+        await this.env.MACHINE.get(this.env.MACHINE.idFromName(machineId)).fetch("https://do/deliver", {
+          method: "POST",
+          body: JSON.stringify({ kind: "user_event", conv: msg.conv, event: sealed }),
+        });
       }
     }
   }
@@ -249,4 +265,9 @@ export class UserDO extends DurableObject<Env> {
   private conv(conv: string): DurableObjectStub {
     return this.env.CONVERSATION.get(this.env.CONVERSATION.idFromName(conv));
   }
+}
+
+// 是否 @ 了 AI（人对人房间里唤起百姓AI）
+export function mentionsAI(text: string): boolean {
+  return /@\s*(百姓\s*AI|AI|ai|Ai)\b/.test(text) || text.includes("@百姓AI") || text.includes("@AI");
 }
