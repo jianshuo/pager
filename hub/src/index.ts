@@ -23,6 +23,20 @@ export function user(env: Env): DurableObjectStub {
   return env.USER.get(env.USER.idFromName("user"));
 }
 
+// 解析客户端身份：工作区 CLIENT_TOKEN（老单人，无身份名，author 自报）
+// 或已注册的个人 token（有 userId+name，服务端盖 author）。都不是 → 拒绝。
+async function resolveClient(
+  env: Env,
+  token: string | null
+): Promise<{ ok: boolean; userId?: string; name?: string }> {
+  if (!token) return { ok: false };
+  if (token === env.CLIENT_TOKEN) return { ok: true };
+  const who = await (
+    await user(env).fetch("https://do/whoami", { method: "POST", body: JSON.stringify({ token }) })
+  ).json<{ userId: string; name: string } | null>();
+  return who ? { ok: true, userId: who.userId, name: who.name } : { ok: false };
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -37,10 +51,28 @@ export default {
       return env.MACHINE.get(env.MACHINE.idFromName(machineId)).fetch(new Request("https://do/ws", req));
     }
 
-    if (token !== env.CLIENT_TOKEN) return new Response("unauthorized", { status: 401 });
+    // 注册新用户：需要工作区 CLIENT_TOKEN（凭它加入工作区），返回个人 token
+    if (url.pathname === "/api/users" && req.method === "POST") {
+      if (token !== env.CLIENT_TOKEN) return new Response("unauthorized", { status: 401 });
+      const { name } = await req.json<{ name?: string }>().catch(() => ({ name: "" }));
+      return user(env).fetch(new Request("https://do/register", {
+        method: "POST",
+        body: JSON.stringify({ name: name ?? "" }),
+      }));
+    }
+
+    // 客户端鉴权：接受工作区 CLIENT_TOKEN（老单人身份，author 自报）或已注册的个人 token
+    const identity = await resolveClient(env, token);
+    if (!identity.ok) return new Response("unauthorized", { status: 401 });
 
     if (url.pathname === "/ws/client") {
-      return user(env).fetch(new Request("https://do/ws", req));
+      // 把认证出的身份名传给 UserDO，挂到 socket 上，send 时盖 author
+      const wsUrl = new URL("https://do/ws");
+      if (identity.name) {
+        wsUrl.searchParams.set("user", identity.userId!);
+        wsUrl.searchParams.set("name", identity.name);
+      }
+      return user(env).fetch(new Request(wsUrl.toString(), req));
     }
 
     try {

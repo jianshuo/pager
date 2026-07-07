@@ -38,6 +38,14 @@ export class UserDO extends DurableObject<Env> {
         updatedAt INTEGER NOT NULL
       )`
     );
+    // 用户注册表：每个人一个身份 + 个人 token。消息 author 由服务端按 token 归属，不可伪造。
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        token TEXT NOT NULL UNIQUE
+      )`
+    );
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -48,7 +56,24 @@ export class UserDO extends DurableObject<Env> {
           return new Response("expected websocket", { status: 426 });
         const pair = new WebSocketPair();
         this.ctx.acceptWebSocket(pair[1]);
+        // Worker 已鉴权并解析出身份，用 ?user&name 传来；挂在 socket 上（跨休眠保留），
+        // send 时用它给消息盖 author（防伪造）。CLIENT_TOKEN 老客户端无身份 → 保留自报。
+        const uname = url.searchParams.get("name");
+        if (uname) pair[1].serializeAttachment({ name: uname });
         return new Response(null, { status: 101, webSocket: pair[0] });
+      }
+      case "POST /register": {
+        const { name } = await req.json<{ name: string }>();
+        const clean = (name ?? "").trim().slice(0, 40) || "匿名";
+        const id = `usr_${crypto.randomUUID()}`;
+        const token = `utk_${crypto.randomUUID().replace(/-/g, "")}`;
+        this.sql.exec("INSERT INTO users (id, name, token) VALUES (?, ?, ?)", id, clean, token);
+        return Response.json({ userId: id, name: clean, token });
+      }
+      case "POST /whoami": {
+        const { token } = await req.json<{ token: string }>();
+        const row = [...this.sql.exec("SELECT id, name FROM users WHERE token = ?", token)][0];
+        return row ? Response.json({ userId: row.id, name: row.name }) : Response.json(null);
       }
       case "POST /notify":
         return await this.notify((await req.json()) as NotifyBody);
@@ -213,6 +238,11 @@ export class UserDO extends DurableObject<Env> {
     if (msg.kind === "send") {
       const row = [...this.sql.exec("SELECT machineId, dir, kind FROM conversations WHERE id = ?", msg.conv)][0];
       if (!row) return;
+      // 已认证身份 → 用它盖 author（防伪造）；老客户端(CLIENT_TOKEN 无身份) → 保留自报
+      const att = ws.deserializeAttachment() as { name?: string } | null;
+      if (att?.name && msg.event.type === "text" && msg.event.body && typeof msg.event.body === "object") {
+        (msg.event.body as Record<string, unknown>).author = att.name;
+      }
       const sealedRes = await this.conv(msg.conv).fetch("https://do/ingest", {
         method: "POST",
         body: JSON.stringify({ event: msg.event }),
