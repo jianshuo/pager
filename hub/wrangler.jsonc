@@ -1,0 +1,16 @@
+{
+  "name": "pager-hub",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ConversationDO", "MachineDO", "UserDO"] }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CONVERSATION", "class_name": "ConversationDO" },
+      { "name": "MACHINE", "class_name": "MachineDO" },
+      { "name": "USER", "class_name": "UserDO" }
+    ]
+  }
+}
