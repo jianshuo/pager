@@ -164,6 +164,39 @@ describe("UserDO", () => {
     dws.close();
   });
 
+  it("status 事件更新 state 但不覆盖 lastMessage（保留上一条正文）", async () => {
+    const conv = env.CONVERSATION.get(env.CONVERSATION.idFromName("cnv_status_keep"));
+    await conv.fetch("https://do/init", {
+      method: "POST",
+      body: JSON.stringify({ machineId: "mch_sk", machineName: "SK", dir: "/p" }),
+    });
+    await post(conv, "/ingest", {
+      event: {
+        id: "evt_sk1",
+        conv: "cnv_status_keep",
+        ts: 1751780400,
+        role: "agent",
+        agent: "claude-code",
+        type: "text",
+        body: { markdown: "这是最终答案" },
+      },
+    });
+    await post(conv, "/ingest", {
+      event: {
+        id: "evt_sk2",
+        conv: "cnv_status_keep",
+        ts: 1751780401,
+        role: "agent",
+        agent: "claude-code",
+        type: "status",
+        body: { state: "done" },
+      },
+    });
+    const list = await (await userStub().fetch("https://do/conversations")).json<any[]>();
+    const row = list.find((c) => c.id === "cnv_status_keep");
+    expect(row).toMatchObject({ state: "done", lastMessage: "这是最终答案" });
+  });
+
   it("机器离线广播", async () => {
     const { ws, got } = await clientWs();
 

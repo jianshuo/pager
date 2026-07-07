@@ -66,7 +66,7 @@ ws.on("message", (data) => {
 for (let i = 0; ; i++) {
   const machines = await (await api("/api/machines")).json();
   if (machines.some((m) => m.id === MACHINE && m.online)) break;
-  if (i > 40) fail("机器 60s 未上线");
+  if (i > 40) fail("机器 10s 未上线");
   await new Promise((r) => setTimeout(r, 250));
 }
 console.log("client: 机器已在线");
@@ -88,7 +88,7 @@ for (let i = 0; ; i++) {
     console.log(`client: 会话状态 done，lastSeq=${row.lastSeq}`);
     break;
   }
-  if (i > 40) fail(`会话 60s 未到 done（当前 ${row?.state}）`);
+  if (i > 40) fail(`会话 10s 未到 done（当前 ${row?.state}）`);
   await new Promise((r) => setTimeout(r, 250));
 }
 

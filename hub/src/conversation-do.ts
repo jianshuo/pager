@@ -15,7 +15,8 @@ export interface NotifyBody {
   conv: string;
   event: EventLoose;
   meta: ConvMeta;
-  summary: { state: string; lastMessage: string; lastSeq: number; updatedAt: number };
+  // status 事件不代表一条可展示的正文：lastMessage 为 null 时，UserDO 保留会话列表里上一条的值
+  summary: { state: string; lastMessage: string | null; lastSeq: number; updatedAt: number };
 }
 
 export class ConversationDO extends DurableObject<Env> {
@@ -70,18 +71,18 @@ export class ConversationDO extends DurableObject<Env> {
   }
 
   private async ingest(body: { event: unknown }): Promise<Response> {
+    // 注意：解析 + seq 计算 + 落库必须在第一个 await 之前同步跑完——
+    // 一旦在这之前插入 await，多条并发到达的 daemon 事件（同一个 conv）就可能在这里交错，
+    // seq 分配顺序不再保证跟到达顺序一致（曾实测触发：running/done 两条 status 乱序落到 UserDO）。
     const draft = EventDraftLoose.parse(body.event);
     const row = [...this.sql.exec("SELECT COALESCE(MAX(seq), 0) AS m FROM events")][0];
     const seq = (row.m as number) + 1;
     const event = { ...draft, seq } as EventLoose;
     this.sql.exec("INSERT INTO events (seq, id, json) VALUES (?, ?, ?)", seq, event.id, JSON.stringify(event));
 
-    const meta = ((await this.ctx.storage.get<ConvMeta>("meta")) ?? {
-      machineId: "",
-      machineName: "",
-      dir: "",
-      state: "thinking",
-    }) as ConvMeta;
+    const meta = await this.ctx.storage.get<ConvMeta>("meta");
+    if (!meta) return Response.json({ error: "conversation not initialized" }, { status: 409 });
+
     if (event.type === "status") {
       const s = StatusBody.safeParse(event.body);
       if (s.success) {
@@ -137,12 +138,13 @@ export class ConversationDO extends DurableObject<Env> {
   }
 }
 
-function lastMessageOf(e: EventLoose): string {
+function lastMessageOf(e: EventLoose): string | null {
   const b = e.body as Record<string, unknown> | undefined;
   if (e.type === "text" && typeof b?.markdown === "string") return b.markdown.slice(0, 120);
   if (e.type === "tool_card" && typeof b?.title === "string") return b.title.slice(0, 120);
   if (e.type === "permission_request" && typeof b?.description === "string")
     return `需要批准：${b.description}`.slice(0, 120);
-  if (e.type === "status" && typeof b?.state === "string") return `[${b.state}]`;
+  // status 事件只是状态变化，不是一条新正文：不覆盖会话列表里上一条的 lastMessage
+  if (e.type === "status") return null;
   return `[${e.type}]`;
 }

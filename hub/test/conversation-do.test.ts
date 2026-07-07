@@ -89,4 +89,12 @@ describe("ConversationDO", () => {
     await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
     expect((await post(s, "/ingest", { event: { id: "bad" } })).status).toBe(400);
   });
+
+  it("未 /init 直接 ingest 409（不再用空壳 meta 兜底）", async () => {
+    const s = stub("cnv_i");
+    const res = await post(s, "/ingest", { event: draft("cnv_i", 1) });
+    expect(res.status).toBe(409);
+    const meta = await (await s.fetch("https://do/meta")).json<any>();
+    expect(meta).toBeNull();
+  });
 });

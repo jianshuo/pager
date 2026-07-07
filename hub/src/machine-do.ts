@@ -10,12 +10,23 @@ interface MachineInfoStored {
 }
 
 export class MachineDO extends DurableObject<Env> {
+  // 同一 daemon 背靠背发来的多条消息，webSocketMessage 可能被并发调度（每条各自 await 自己的
+  // conv.fetch），网络往返不保证按发送顺序落地——曾实测出 running/done 两条 status 乱序到 UserDO。
+  // 用一条串行队列把真正的处理逻辑串起来，保证落地顺序等于到达顺序。
+  private msgQueue: Promise<void> = Promise.resolve();
+
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
 
     if (url.pathname === "/ws") {
       if (req.headers.get("Upgrade") !== "websocket")
         return new Response("expected websocket", { status: 426 });
+      // 一台机器同时只应有一个 daemon 连接：新连接接入前踢掉旧的（重连覆盖，而非并存）
+      for (const old of this.ctx.getWebSockets()) {
+        try {
+          old.close(1012, "superseded by new daemon connection");
+        } catch {}
+      }
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1]);
       return new Response(null, { status: 101, webSocket: pair[0] });
@@ -24,9 +35,14 @@ export class MachineDO extends DurableObject<Env> {
     if (url.pathname === "/deliver" && req.method === "POST") {
       const msg = (await req.json()) as HubToDaemon;
       const sockets = this.ctx.getWebSockets();
-      if (sockets.length === 0) return Response.json({ delivered: false });
-      for (const ws of sockets) ws.send(JSON.stringify(msg));
-      return Response.json({ delivered: true });
+      let delivered = false;
+      for (const ws of sockets) {
+        try {
+          ws.send(JSON.stringify(msg));
+          delivered = true;
+        } catch {}
+      }
+      return Response.json({ delivered });
     }
 
     if (url.pathname === "/info") {
@@ -46,6 +62,13 @@ export class MachineDO extends DurableObject<Env> {
     } catch {
       return; // 非 JSON：忽略，不炸 socket
     }
+    // 链到队列尾部而非直接 await 处理逻辑：保证即使 webSocketMessage 被并发调用，
+    // 每条消息的处理仍严格按 send 顺序依次跑完再跑下一条。
+    this.msgQueue = this.msgQueue.then(() => this.handleMessage(msg));
+    await this.msgQueue;
+  }
+
+  private async handleMessage(msg: { kind?: string; event?: unknown }): Promise<void> {
     try {
       switch (msg.kind) {
         case "hello": {
@@ -85,7 +108,8 @@ export class MachineDO extends DurableObject<Env> {
           break;
         }
       }
-    } catch {
+    } catch (err) {
+      console.error("machine-do message handling failed:", err);
       // 校验失败：丢弃该消息，不影响连接（宽松姿态只对 event.type/body；envelope 坏了就丢）
     }
   }

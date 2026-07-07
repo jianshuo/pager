@@ -88,12 +88,17 @@ export class UserDO extends DurableObject<Env> {
   }
 
   private async notify(body: NotifyBody): Promise<Response> {
+    // lastMessage 可能为 null（status 事件不应覆盖上一条正文）：
+    // INSERT 分支用 COALESCE(?, '') 满足 NOT NULL（全新会话首个事件就是 status 的边界情况）；
+    // UPDATE 分支对同一个可能为 null 的绑定值再做一次 COALESCE，落到已存的旧值——
+    // 注意不能写成 COALESCE(excluded.lastMessage, ...)：excluded 反映的是 VALUES 里表达式求值后的行，
+    // 那时 COALESCE(?, '') 已经把 null 变成 ''，excluded.lastMessage 永远不是 null，UPDATE 分支就失效了。
     this.sql.exec(
       `INSERT INTO conversations (id, machineId, machineName, dir, state, lastMessage, lastSeq, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, COALESCE(?, ''), ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          state = excluded.state,
-         lastMessage = excluded.lastMessage,
+         lastMessage = COALESCE(?, conversations.lastMessage),
          lastSeq = excluded.lastSeq,
          updatedAt = excluded.updatedAt`,
       body.conv,
@@ -103,7 +108,8 @@ export class UserDO extends DurableObject<Env> {
       body.summary.state,
       body.summary.lastMessage,
       body.summary.lastSeq,
-      body.summary.updatedAt
+      body.summary.updatedAt,
+      body.summary.lastMessage
     );
     this.broadcast({ kind: "event", event: body.event });
     if (this.ctx.getWebSockets().length === 0) await this.maybePush(body);
@@ -126,16 +132,21 @@ export class UserDO extends DurableObject<Env> {
     for (const row of rows) {
       const payload: Record<string, unknown> = { conv: body.conv };
       if (plan.request_id) payload.request_id = plan.request_id;
-      const r = await sendApns(cfg, {
-        deviceToken: row.token as string,
-        title: plan.title,
-        body: plan.body,
-        priority: plan.priority,
-        category: plan.category,
-        threadId: body.conv,
-        payload,
-      });
-      if (r.gone) this.sql.exec("DELETE FROM devices WHERE token = ?", row.token);
+      try {
+        const r = await sendApns(cfg, {
+          deviceToken: row.token as string,
+          title: plan.title,
+          body: plan.body,
+          priority: plan.priority,
+          category: plan.category,
+          threadId: body.conv,
+          payload,
+        });
+        if (r.gone) this.sql.exec("DELETE FROM devices WHERE token = ?", row.token);
+      } catch {
+        // 单台设备推送失败（网络/APNs 抖动）不该拖垮其它设备，也不能冒泡到 ingest 调用链
+        continue;
+      }
     }
   }
 
@@ -172,7 +183,13 @@ export class UserDO extends DurableObject<Env> {
     if (msg.kind === "subscribe") {
       const res = await this.conv(msg.conv).fetch(`https://do/events?after=${msg.afterSeq}`);
       const events = await res.json<unknown[]>();
-      for (const event of events) ws.send(JSON.stringify({ kind: "event", event }));
+      for (const event of events) {
+        try {
+          ws.send(JSON.stringify({ kind: "event", event }));
+        } catch {
+          break; // socket 已死，停止补 backlog
+        }
+      }
       return;
     }
     if (msg.kind === "send") {
@@ -201,7 +218,13 @@ export class UserDO extends DurableObject<Env> {
 
   private broadcast(obj: unknown): void {
     const s = JSON.stringify(obj);
-    for (const ws of this.ctx.getWebSockets()) ws.send(s);
+    for (const ws of this.ctx.getWebSockets()) {
+      try {
+        ws.send(s);
+      } catch {
+        // 单个死 socket 不该拖垮其它客户端的广播
+      }
+    }
   }
 
   private conv(conv: string): DurableObjectStub {

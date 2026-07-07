@@ -61,6 +61,7 @@ export default {
       }
     } catch (err) {
       if (err instanceof ZodError) return Response.json({ error: err.issues }, { status: 400 });
+      if (err instanceof SyntaxError) return Response.json({ error: "malformed json" }, { status: 400 });
       throw err;
     }
     return new Response("not found", { status: 404 });
@@ -84,10 +85,12 @@ async function newConversation(env: Env, raw: unknown): Promise<Response> {
 
   const conv = newId("cnv");
   const convStub = env.CONVERSATION.get(env.CONVERSATION.idFromName(conv));
-  await convStub.fetch("https://do/init", {
+  const initRes = await convStub.fetch("https://do/init", {
     method: "POST",
     body: JSON.stringify({ machineId: body.machineId, machineName: info.machine.name, dir: body.dir }),
   });
+  if (!initRes.ok) return Response.json({ error: "failed to initialize conversation" }, { status: 500 });
+
   const draft: EventDraft = {
     id: newId("evt"),
     conv,
@@ -97,13 +100,31 @@ async function newConversation(env: Env, raw: unknown): Promise<Response> {
     type: "text",
     body: { markdown: body.message },
   };
-  const sealed = await (
-    await convStub.fetch("https://do/ingest", { method: "POST", body: JSON.stringify({ event: draft }) })
-  ).json();
-  await machine.fetch("https://do/deliver", {
+  const ingestRes = await convStub.fetch("https://do/ingest", {
+    method: "POST",
+    body: JSON.stringify({ event: draft }),
+  });
+  if (!ingestRes.ok) return Response.json({ error: "failed to ingest task message" }, { status: 500 });
+  const sealed = await ingestRes.json();
+
+  const deliverRes = await machine.fetch("https://do/deliver", {
     method: "POST",
     body: JSON.stringify({ kind: "task", conv, dir: body.dir, agent: "claude-code", event: sealed }),
   });
+  const { delivered } = await deliverRes.json<{ delivered: boolean }>();
+  if (!delivered) {
+    const failDraft: EventDraft = {
+      id: newId("evt"),
+      conv,
+      ts: nowSec(),
+      role: "system",
+      agent: "claude-code",
+      type: "status",
+      body: { state: "failed", note: "daemon 掉线，任务未送达" },
+    };
+    await convStub.fetch("https://do/ingest", { method: "POST", body: JSON.stringify({ event: failDraft }) });
+    return Response.json({ error: "daemon went offline" }, { status: 502 });
+  }
   return Response.json(NewConversationResponse.parse({ id: conv }), { status: 201 });
 }
 
@@ -122,12 +143,19 @@ async function permissionResponse(env: Env, raw: unknown): Promise<Response> {
     type: "permission_response",
     body: { request_id: body.request_id, choice: body.choice },
   };
-  const sealed = await (
-    await convStub.fetch("https://do/ingest", { method: "POST", body: JSON.stringify({ event: draft }) })
-  ).json();
-  await env.MACHINE.get(env.MACHINE.idFromName(meta.machineId)).fetch("https://do/deliver", {
+  const ingestRes = await convStub.fetch("https://do/ingest", {
+    method: "POST",
+    body: JSON.stringify({ event: draft }),
+  });
+  if (!ingestRes.ok) return Response.json({ error: "failed to ingest permission response" }, { status: 500 });
+  const sealed = await ingestRes.json();
+
+  const deliverRes = await env.MACHINE.get(env.MACHINE.idFromName(meta.machineId)).fetch("https://do/deliver", {
     method: "POST",
     body: JSON.stringify({ kind: "user_event", conv: body.conv, event: sealed }),
   });
+  const { delivered } = await deliverRes.json<{ delivered: boolean }>();
+  // daemon 掉线的兜底是它自身的超时拒绝逻辑，这里不再补状态事件
+  if (!delivered) return Response.json({ error: "daemon offline" }, { status: 502 });
   return Response.json({ ok: true });
 }

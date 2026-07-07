@@ -110,4 +110,12 @@ describe("REST API", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("请求体不是合法 JSON 400", async () => {
+    const res = await api("/api/conversations", {
+      method: "POST",
+      body: "{oops",
+    });
+    expect(res.status).toBe(400);
+  });
 });
