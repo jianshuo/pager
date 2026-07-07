@@ -54,6 +54,17 @@ struct ConversationListView: View {
                                       machineName: summary?.machineName ?? "",
                                       dir: summary?.dir ?? ""))
             }
+            // 深链来源二：锁屏/通知中心点按通知正文（非 ALLOW/DENY 按钮）。AppDelegate（见
+            // PushManager.swift）把目标 conv id 写进 model.deepLinkConv，这里观察到后入栈并清空，
+            // 复用与 .onOpenURL 相同的「从已刷新会话列表查机器名/目录」逻辑。
+            .onChange(of: model.deepLinkConv) { _, newValue in
+                guard let convId = newValue, convId.hasPrefix("cnv_") else { return }
+                let summary = model.conversations.first { $0.id == convId }
+                path.append(ConvRoute(id: convId,
+                                      machineName: summary?.machineName ?? "",
+                                      dir: summary?.dir ?? ""))
+                model.deepLinkConv = nil
+            }
             .sheet(isPresented: $showNew) {
                 NewConversationView(
                     onCreated: { route in path.append(route) },

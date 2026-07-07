@@ -6,6 +6,10 @@ struct PagerApp: App {
     /// Child views read it with `@Environment(AppModel.self)`.
     @State private var model = AppModel()
 
+    /// UIKit shim required for APNs device-token callbacks and `UNUserNotificationCenterDelegate`
+    /// (SwiftUI's `App` protocol has no hook for either). See PushManager.swift.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -20,6 +24,12 @@ struct PagerApp: App {
         WindowGroup {
             ContentView()
                 .environment(model)
+                .task {
+                    // Hand the (weak) model reference to the app delegate once it exists, so
+                    // notification-tap deep-links (AppDelegate.model.deepLinkConv) can reach it.
+                    // ALLOW/DENY don't need this — they call HubAPI directly.
+                    appDelegate.model = model
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

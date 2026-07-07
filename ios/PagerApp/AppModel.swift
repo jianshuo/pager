@@ -29,6 +29,11 @@ final class AppModel {
     /// Applied — and cleared — once the matching event is ingested; see `insert(_:)`.
     private var pendingPatches: [String: [String: String]] = [:]
 
+    /// Set by `AppDelegate` (see PushManager.swift) when the user taps a notification body — the
+    /// conversation id to deep-link into. `ConversationListView` observes this via `.onChange`,
+    /// pushes the route, and resets it to nil.
+    var deepLinkConv: String?
+
     let ws: any WSClient
     private let api: HubAPI
 
