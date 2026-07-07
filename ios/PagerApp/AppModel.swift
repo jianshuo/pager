@@ -89,6 +89,75 @@ final class AppModel {
         eventsByConv[conv] ?? []
     }
 
+    // MARK: - Send (WS upstream)
+
+    /// Sends a user text message over the WS. We build an unsealed `EventDraft` (no seq); the hub
+    /// stamps the authoritative seq, ingests it, and broadcasts the sealed `Event` back to us —
+    /// that echo is what actually appears in the list (via `ingest`). We deliberately do NOT
+    /// optimistically insert a placeholder, so seq stays authoritative and there's no dedupe race.
+    func sendText(conv: String, markdown: String) {
+        let draft = EventDraft(
+            id: "evt_\(UUID().uuidString)",
+            conv: conv,
+            ts: Int(Date().timeIntervalSince1970),
+            role: "user",
+            agent: "claude-code",
+            type: "text",
+            body: ["markdown": .string(markdown)]
+        )
+        ws.send(.send(conv: conv, event: draft))
+    }
+
+    // MARK: - Permission response (REST)
+
+    /// Answers a pending permission request via REST (the hub relays it to the daemon and
+    /// broadcasts a `permission_response` event back). Errors are swallowed/logged — the UI
+    /// updates its local answered-set optimistically, and the broadcast echo confirms it.
+    func permissionRespond(conv: String, requestId: String, choice: String) async {
+        do {
+            try await api.permissionResponse(conv: conv, requestId: requestId, choice: choice)
+        } catch {
+            print("[AppModel] permissionRespond failed: conv=\(conv) requestId=\(requestId) error=\(error)")
+        }
+    }
+
+    // MARK: - Derived list status
+
+    /// The most recent `status` event's state for `conv` (nil if none seen). Used for the list
+    /// status dot (running / done / failed / thinking).
+    func latestStatus(for conv: String) -> String? {
+        for event in events(for: conv).reversed() {
+            if case .status(let state, _) = event.body { return state }
+        }
+        return nil
+    }
+
+    /// The latest permission request in `conv` that has not yet been answered by a
+    /// `permission_response` with the same `request_id`. Drives the 🟠 list dot and the
+    /// conversation view's action buttons. Returns nil if nothing is waiting.
+    func pendingPermission(for conv: String) -> (requestId: String, description: String)? {
+        let list = events(for: conv)
+        var answered: Set<String> = []
+        for event in list {
+            if case .permissionResponse(let rid, _) = event.body { answered.insert(rid) }
+        }
+        for event in list.reversed() {
+            if case .permissionRequest(let rid, _, let desc, _) = event.body, !answered.contains(rid) {
+                return (rid, desc)
+            }
+        }
+        return nil
+    }
+
+    // MARK: - WS lifecycle
+
+    /// Opens the shared WS (no-op if already connected or if no token is configured). Call when
+    /// the app becomes active.
+    func connect() { ws.connect() }
+
+    /// Closes the shared WS. Call when the app backgrounds.
+    func disconnect() { ws.disconnect() }
+
     // MARK: - REST refresh
 
     func refreshMachines() async {

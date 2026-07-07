@@ -18,6 +18,10 @@ targets:
           UIColorName: ""
         UIBackgroundModes:
           - remote-notification
+        CFBundleURLTypes:
+          - CFBundleURLName: com.wangjianshuo.Pager
+            CFBundleURLSchemes:
+              - pager
     entitlements:
       path: PagerApp/Pager.entitlements
       properties:
