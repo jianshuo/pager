@@ -14,6 +14,8 @@ targets:
       path: PagerApp/Info.plist
       properties:
         CFBundleDisplayName: Pager
+        # 只用 HTTPS/WSS 标准加密，无自研加密 → 自动通过出口合规，免 TestFlight「缺少合规」拦截
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen:
           UIColorName: ""
         UIBackgroundModes:
