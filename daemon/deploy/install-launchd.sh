@@ -43,7 +43,13 @@ else
 fi
 
 echo "== launchd =="
+# bootout 是异步的：紧跟 bootstrap 会撞上「旧 label 还没注销」→ Input/output error(5)。
+# 等旧 label 从 launchctl 列表消失（最多 ~5s）再继续。
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+for _ in $(seq 1 25); do
+  launchctl list 2>/dev/null | grep -q "$LABEL" || break
+  sleep 0.2
+done
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -68,5 +74,8 @@ cat > "$PLIST" <<EOF
 </dict>
 </plist>
 EOF
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+launchctl bootstrap "gui/$(id -u)" "$PLIST" || {
+  echo "bootstrap 首次失败，等 2s 重试一次…"; sleep 2
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+}
 echo "已加载 ${LABEL}；日志: ${PAGER_HOME}/logs/daemon.log"
