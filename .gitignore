@@ -2,3 +2,6 @@ node_modules/
 dist/
 .DS_Store
 .claude/worktrees/
+.dev.vars
+.secrets.production.local
+.wrangler/
