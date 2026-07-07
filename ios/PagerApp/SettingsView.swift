@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var token: String = Keychain.token ?? ""
     @State private var hubURLString: String = Keychain.hubURL
     @State private var displayName: String = Keychain.displayName
+    @State private var isRegistered: Bool = Keychain.userToken != nil
 
     var body: some View {
         NavigationStack {
@@ -13,6 +14,20 @@ struct SettingsView: View {
                 Section("我的昵称") {
                     TextField("我的昵称", text: $displayName)
                         .autocorrectionDisabled()
+                    if isRegistered {
+                        Text("已登记身份：\(Keychain.displayName)")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.brandGreen)
+                    } else {
+                        Text("未登记（保存昵称后自动登记）")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("重新登记身份", role: .destructive) {
+                        Keychain.userToken = nil
+                        isRegistered = false
+                    }
+                    .disabled(!isRegistered)
                 }
                 Section("Hub 地址") {
                     TextField("Hub URL", text: $hubURLString)

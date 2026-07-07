@@ -113,6 +113,27 @@ final class AppModel {
         ws.send(.send(conv: conv, event: draft))
     }
 
+    // MARK: - Identity registration (REST)
+
+    /// Registers a personal identity with the hub if we haven't already, so subsequent
+    /// REST/WS traffic authenticates as this person (see `Keychain.authToken`) instead of the
+    /// shared workspace token. Idempotent — a no-op once `Keychain.userToken` is set. Call
+    /// before `connect()` so the WS opens with the personal token from the very first frame.
+    /// Best-effort: on failure we log and fall back to the workspace token (legacy identity,
+    /// author self-declared) rather than blocking app usage.
+    func ensureRegistered() async {
+        guard Keychain.userToken == nil else { return }
+        guard let workspaceToken = Keychain.token, !workspaceToken.isEmpty else { return }
+        let name = Keychain.displayName
+        guard !name.isEmpty else { return }
+        do {
+            let personalToken = try await api.registerUser(name: name)
+            Keychain.userToken = personalToken
+        } catch {
+            print("[AppModel] ensureRegistered failed, falling back to workspace token: error=\(error)")
+        }
+    }
+
     // MARK: - Permission response (REST)
 
     /// Answers a pending permission request via REST (the hub relays it to the daemon and

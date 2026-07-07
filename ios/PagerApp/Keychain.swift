@@ -8,9 +8,12 @@ enum Keychain {
 
     private static let service = "dev.pager"
     private static let tokenAccount = "clientToken"
+    private static let userTokenAccount = "userToken"
     private static let hubURLDefaultsKey = "dev.pager.hubURL"
     private static let displayNameDefaultsKey = "dev.pager.displayName"
 
+    /// The workspace-level token (legacy identity, author self-declared). Used only for
+    /// `HubAPI.registerUser` and as a fallback when no personal token has been registered yet.
     static var token: String? {
         get { readString(account: tokenAccount) }
         set {
@@ -20,6 +23,27 @@ enum Keychain {
                 delete(account: tokenAccount)
             }
         }
+    }
+
+    /// The person's personal token (starts "utk_"), returned by `POST /api/users` and stored
+    /// after `AppModel.ensureRegistered()` runs. Nil until registered. The hub stamps every
+    /// message's `author` with the authenticated name for this token (ignoring any
+    /// self-declared author in the request body).
+    static var userToken: String? {
+        get { readString(account: userTokenAccount) }
+        set {
+            if let newValue, !newValue.isEmpty {
+                writeString(newValue, account: userTokenAccount)
+            } else {
+                delete(account: userTokenAccount)
+            }
+        }
+    }
+
+    /// Single source of truth for the Bearer token used on every REST/WS call except
+    /// registration itself: the personal token once registered, else the workspace token.
+    static var authToken: String? {
+        userToken ?? token
     }
 
     static var hubURL: String {

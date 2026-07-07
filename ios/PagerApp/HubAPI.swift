@@ -35,7 +35,7 @@ struct HubAPI: Sendable {
     init(
         session: URLSession = .shared,
         baseURLProvider: @escaping @Sendable () -> String = { Keychain.hubURL },
-        tokenProvider: @escaping @Sendable () -> String? = { Keychain.token }
+        tokenProvider: @escaping @Sendable () -> String? = { Keychain.authToken }
     ) {
         self.session = session
         self.baseURLProvider = baseURLProvider
@@ -120,10 +120,31 @@ struct HubAPI: Sendable {
         try Self.checkOK(response, data: data)
     }
 
+    /// Registers a personal identity for `name` with the hub and returns the personal token
+    /// (starts "utk_"). Uses the WORKSPACE token (`Keychain.token`), NOT `Keychain.authToken` —
+    /// registering a new identity requires the workspace secret, not a previously-issued
+    /// personal token. Callers store the result in `Keychain.userToken` and use it thereafter.
+    func registerUser(name: String) async throws -> String {
+        guard let workspaceToken = Keychain.token, !workspaceToken.isEmpty else {
+            throw HubError.notConfigured
+        }
+        let body = try JSONEncoder().encode(RegisterUserRequestBody(name: name))
+        let request = try makeRequest(
+            path: "/api/users", method: "POST", body: body, tokenOverride: workspaceToken
+        )
+        let (data, response) = try await session.data(for: request)
+        try Self.checkOK(response, data: data)
+        return try JSONDecoder().decode(RegisterUserResponseBody.self, from: data).token
+    }
+
     // MARK: - Request building / response handling
 
-    private func makeRequest(path: String, method: String = "GET", body: Data? = nil) throws -> URLRequest {
-        guard let token = tokenProvider(), !token.isEmpty else { throw HubError.notConfigured }
+    private func makeRequest(
+        path: String, method: String = "GET", body: Data? = nil, tokenOverride: String? = nil
+    ) throws -> URLRequest {
+        guard let token = tokenOverride ?? tokenProvider(), !token.isEmpty else {
+            throw HubError.notConfigured
+        }
         guard let url = URL(string: baseURLProvider() + path) else {
             throw HubError.badRequest("invalid hub URL")
         }
@@ -195,6 +216,16 @@ private struct PermissionResponseRequestBody: Encodable {
 
 private struct RegisterDeviceRequestBody: Encodable {
     let deviceToken: String
+}
+
+private struct RegisterUserRequestBody: Encodable {
+    let name: String
+}
+
+private struct RegisterUserResponseBody: Decodable {
+    let userId: String
+    let name: String
+    let token: String
 }
 
 private struct HubErrorBody: Decodable {

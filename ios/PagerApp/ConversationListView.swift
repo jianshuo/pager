@@ -45,6 +45,7 @@ struct ConversationListView: View {
             }
             .refreshable { await refresh() }
             .task {
+                await model.ensureRegistered()   // personal token, if not yet registered — must precede connect()
                 model.connect()   // idempotent; scenePhase .active may not fire on cold launch
                 await refresh()
                 #if DEBUG
