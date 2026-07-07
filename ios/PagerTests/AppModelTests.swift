@@ -1,6 +1,32 @@
 import XCTest
 @testable import Pager
 
+/// Test seam for the WS-driven behaviors (resubscribe-on-reconnect) in `AppModel`: `ClientWS`
+/// is a concrete class wrapping a real `URLSessionWebSocketTask`, so rather than mock that,
+/// `AppModel` depends on the `WSClient` protocol (see `ClientWS.swift`) and this spy records
+/// calls without any socket.
+@MainActor
+private final class SpyWSClient: WSClient {
+    var onMessage: ((ServerMessage) -> Void)?
+    var onConnected: (@MainActor () -> Void)?
+
+    var connectCallCount = 0
+    var disconnectCallCount = 0
+    var subscribeCalls: [(conv: String, afterSeq: Int)] = []
+    var sentMessages: [ClientMessage] = []
+
+    func connect() { connectCallCount += 1 }
+    func disconnect() { disconnectCallCount += 1 }
+
+    func subscribe(conv: String, afterSeq: Int) {
+        subscribeCalls.append((conv: conv, afterSeq: afterSeq))
+    }
+
+    func send(_ message: ClientMessage) {
+        sentMessages.append(message)
+    }
+}
+
 @MainActor
 final class AppModelTests: XCTestCase {
 
@@ -69,6 +95,55 @@ final class AppModelTests: XCTestCase {
         let offlineJSON = #"{"kind":"machine_status","machine":{"id":"mch_1","name":"MacBook"},"online":false}"#
         model.ingest(try decodeServerMessage(offlineJSON))
         XCTAssertEqual(model.machines["mch_1"]?.online, false)
+    }
+
+    func testPatchBeforeEventIsBufferedThenSelfHealsOnArrival() throws {
+        let model = AppModel(api: HubAPI(), ws: ClientWS())
+
+        // Patch arrives first (out-of-order WS delivery) for an event we haven't seen yet.
+        let patchJSON = #"{"kind":"patch","conv":"cnv_1","eventId":"evt_x","markdown":"final"}"#
+        model.ingest(try decodeServerMessage(patchJSON))
+        XCTAssertTrue(model.events(for: "cnv_1").isEmpty, "nothing should be stuck/created from an orphan patch")
+
+        // The target text event now arrives with stale markdown; the buffered patch should
+        // apply on top of it immediately.
+        let original = try decodeServerMessage(textEventJSON(id: "evt_x", conv: "cnv_1", seq: 1, markdown: "partial"))
+        model.ingest(original)
+
+        let events = model.events(for: "cnv_1")
+        XCTAssertEqual(events.count, 1)
+        guard case .text(let markdown) = events[0].body else {
+            return XCTFail("expected .text, got \(events[0].body)")
+        }
+        XCTAssertEqual(markdown, "final")
+    }
+
+    func testResubscribeOnReconnectUsesLastSeqPerOpenConversation() throws {
+        let spy = SpyWSClient()
+        let model = AppModel(api: HubAPI(), ws: spy)
+
+        model.ingest(try decodeServerMessage(textEventJSON(id: "evt_1", conv: "cnv_a", seq: 5, markdown: "hi")))
+        model.openConversation("cnv_a")
+        spy.subscribeCalls.removeAll() // clear the subscribe issued by openConversation itself
+
+        spy.onConnected?() // simulate ClientWS firing onConnected after a reconnect
+
+        XCTAssertEqual(spy.subscribeCalls.count, 1)
+        XCTAssertEqual(spy.subscribeCalls.first?.conv, "cnv_a")
+        XCTAssertEqual(spy.subscribeCalls.first?.afterSeq, 5, "afterSeq must resume from the highest seq already held, not 0")
+    }
+
+    func testClosedConversationIsNotResubscribed() throws {
+        let spy = SpyWSClient()
+        let model = AppModel(api: HubAPI(), ws: spy)
+
+        model.openConversation("cnv_a")
+        model.closeConversation("cnv_a")
+        spy.subscribeCalls.removeAll()
+
+        spy.onConnected?()
+
+        XCTAssertTrue(spy.subscribeCalls.isEmpty)
     }
 
     func testUnknownTypeEventIsStillIngested() throws {

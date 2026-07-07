@@ -19,14 +19,27 @@ final class AppModel {
     /// frames applied in place. Not exposed directly; read via `events(for:)`.
     private var eventsByConv: [String: [Event]] = [:]
 
-    let ws: ClientWS
+    /// Conversation ids currently open in the UI. Populated by `openConversation`, drained by
+    /// `closeConversation`. Drives `resubscribeAll()` so a WS reconnect re-issues `subscribe`
+    /// for everything still on screen.
+    private var openConvs: Set<String> = []
+
+    /// Patches that arrived before their target text event existed locally (out-of-order WS
+    /// delivery, or a gap during a reconnect backlog pull). Keyed `[conv: [eventId: markdown]]`.
+    /// Applied — and cleared — once the matching event is ingested; see `insert(_:)`.
+    private var pendingPatches: [String: [String: String]] = [:]
+
+    let ws: any WSClient
     private let api: HubAPI
 
-    init(api: HubAPI = HubAPI(), ws: ClientWS = ClientWS()) {
+    init(api: HubAPI = HubAPI(), ws: any WSClient = ClientWS()) {
         self.api = api
         self.ws = ws
         self.ws.onMessage = { [weak self] message in
             self?.ingest(message)
+        }
+        self.ws.onConnected = { [weak self] in
+            self?.resubscribeAll()
         }
     }
 
@@ -53,11 +66,20 @@ final class AppModel {
         }
         list.sort { $0.seq < $1.seq }
         eventsByConv[event.conv] = list
+
+        // Self-heal a patch that arrived before this event (out-of-order WS delivery).
+        if case .text = event.body, let markdown = pendingPatches[event.conv]?[event.id] {
+            applyPatch(conv: event.conv, eventId: event.id, markdown: markdown)
+            pendingPatches[event.conv]?.removeValue(forKey: event.id)
+        }
     }
 
     private func applyPatch(conv: String, eventId: String, markdown: String) {
-        guard var list = eventsByConv[conv] else { return }
-        guard let idx = list.firstIndex(where: { $0.id == eventId }) else { return }
+        guard var list = eventsByConv[conv], let idx = list.firstIndex(where: { $0.id == eventId }) else {
+            print("[AppModel] dropping patch, target event not seen yet — buffering: conv=\(conv) eventId=\(eventId)")
+            pendingPatches[conv, default: [:]][eventId] = markdown
+            return
+        }
         list[idx] = list[idx].withPatchedText(markdown)
         eventsByConv[conv] = list
     }
@@ -82,9 +104,32 @@ final class AppModel {
     // MARK: - Conversation open
 
     /// Subscribes over WS for `conv`, resuming after the highest seq already held locally
-    /// (0 pulls the full backlog).
+    /// (0 pulls the full backlog). Tracks `conv` as open so a later WS reconnect
+    /// (`resubscribeAll`) re-issues this subscribe automatically.
     func openConversation(_ conv: String) {
-        let afterSeq = eventsByConv[conv]?.last?.seq ?? 0
-        ws.subscribe(conv: conv, afterSeq: afterSeq)
+        openConvs.insert(conv)
+        ws.subscribe(conv: conv, afterSeq: lastSeq(for: conv))
+    }
+
+    /// Marks `conv` as no longer open, so a future reconnect won't re-subscribe it. Call from
+    /// the conversation view's `.onDisappear` (wiring is a separate task).
+    func closeConversation(_ conv: String) {
+        openConvs.remove(conv)
+    }
+
+    /// Re-issues `subscribe` for every currently open conversation, each with `afterSeq` set to
+    /// the highest seq already held locally (0 if none). Wired to `ClientWS.onConnected` so a
+    /// dropped connection (background/foreground, cell↔wifi, hub DO cold start) never leaves an
+    /// open conversation silently stale — the backlog pull on resubscribe covers exactly what
+    /// was missed during the outage. Dedupe in `insert(_:)` handles any overlap with events
+    /// already held locally.
+    private func resubscribeAll() {
+        for conv in openConvs {
+            ws.subscribe(conv: conv, afterSeq: lastSeq(for: conv))
+        }
+    }
+
+    private func lastSeq(for conv: String) -> Int {
+        eventsByConv[conv]?.last?.seq ?? 0
     }
 }

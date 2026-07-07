@@ -9,10 +9,36 @@ import Foundation
 /// spawned from this class (`Task { ... }` inside its own methods) inherits `@MainActor`
 /// isolation because the enclosing function is main-actor-isolated, so capturing `self`/state
 /// here is safe under Swift 6 strict concurrency without extra ceremony.
+/// On reconnect (background/foreground, cell↔wifi, hub DO cold start), `onConnected` fires so
+/// `AppModel.resubscribeAll` can re-issue `subscribe` for every open conversation — no broadcast
+/// missed during the outage is silently lost.
+
+/// Seam for testing `AppModel`'s WS-driven behavior (e.g. resubscribe-on-reconnect) without a
+/// real socket. `ClientWS` conforms to this; tests inject a spy conforming to this protocol
+/// instead of standing up a real `URLSessionWebSocketTask`.
 @MainActor
-final class ClientWS {
+protocol WSClient: AnyObject {
+    /// Called on the main actor for every decoded frame from the hub.
+    var onMessage: ((ServerMessage) -> Void)? { get set }
+    /// Called on the main actor once per successful (re)connect, after the receive loop is
+    /// running — including reconnects after a drop. See `AppModel.resubscribeAll`.
+    var onConnected: (@MainActor () -> Void)? { get set }
+    func connect()
+    func disconnect()
+    func subscribe(conv: String, afterSeq: Int)
+    func send(_ message: ClientMessage)
+}
+
+@MainActor
+final class ClientWS: WSClient {
     /// Called on the main actor for every decoded frame from the hub.
     var onMessage: ((ServerMessage) -> Void)?
+
+    /// Called on the main actor once per successful (re)connect (initial connect or any
+    /// reconnect after a drop), after the receive loop is running. `AppModel` wires this to
+    /// `resubscribeAll()` so an open conversation never silently stops updating across an
+    /// outage.
+    var onConnected: (@MainActor () -> Void)?
 
     private let session: URLSession
     private let baseURLProvider: () -> String
@@ -57,6 +83,7 @@ final class ClientWS {
         resetBackoff()
         task.resume()
         startReceiving(task)
+        onConnected?()
     }
 
     /// Closes the socket and stops any pending reconnect. Call on background.
@@ -79,9 +106,10 @@ final class ClientWS {
     /// Encodes and sends a client message. If the socket isn't currently connected, the
     /// message is dropped (best-effort, not queued): the hub is the source of truth via
     /// REST (`HubAPI`) for anything that must survive a dropped connection, and
-    /// `AppModel.openConversation` re-subscribes with the correct `afterSeq` once the
-    /// socket reconnects, so a dropped `subscribe`/`send` here just means "try again once
-    /// connected" rather than silent data loss.
+    /// `AppModel.resubscribeAll` — wired to `onConnected` — re-subscribes every open
+    /// conversation with the correct `afterSeq` once the socket reconnects, so a dropped
+    /// `subscribe`/`send` here just means "try again once connected" rather than silent
+    /// data loss.
     func send(_ message: ClientMessage) {
         guard let task = webSocketTask else {
             print("ClientWS: dropping send, socket not connected")
