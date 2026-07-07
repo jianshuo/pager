@@ -37,7 +37,7 @@ struct EventRow: View {
         case .error(let message, _):
             Text(message)
                 .font(.caption)
-                .foregroundStyle(.red)
+                .foregroundStyle(Theme.failRed)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 2)
         case .unknown(let type, _):
@@ -53,17 +53,55 @@ private struct TextBubble: View {
     let isUser: Bool
 
     var body: some View {
-        HStack {
-            if isUser { Spacer(minLength: 40) }
-            rendered
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(isUser ? Color.accentColor : Color(.secondarySystemBackground))
-                .foregroundStyle(isUser ? Color.white : Color.primary)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-            if !isUser { Spacer(minLength: 40) }
+        if isUser {
+            userBubble
+        } else {
+            aiBubble
         }
+    }
+
+    // 用户：绿底白字，右对齐，右上角 5px（其余 16px）
+    private var userBubble: some View {
+        HStack {
+            Spacer(minLength: 40)
+            rendered
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 9)
+                .background(Theme.brandGreen)
+                .clipShape(UnevenRoundedRectangle(
+                    topLeadingRadius: 16, bottomLeadingRadius: 16,
+                    bottomTrailingRadius: 16, topTrailingRadius: 5, style: .continuous))
+                .frame(maxWidth: 300, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    // AI：奶白气泡，左对齐，左上角 5px；上方琥珀「百姓AI」名，左侧原子头像
+    private var aiBubble: some View {
+        HStack(alignment: .top, spacing: 8) {
+            AIAvatar(size: 32)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("百姓AI")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.amberText)
+                rendered
+                    .foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
+                    .background(Theme.cream)
+                    .clipShape(UnevenRoundedRectangle(
+                        topLeadingRadius: 5, bottomLeadingRadius: 16,
+                        bottomTrailingRadius: 16, topTrailingRadius: 16, style: .continuous))
+                    .overlay(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 5, bottomLeadingRadius: 16,
+                            bottomTrailingRadius: 16, topTrailingRadius: 16, style: .continuous)
+                            .strokeBorder(Theme.aiBubbleBorder, lineWidth: 1))
+            }
+            Spacer(minLength: 40)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// SwiftUI's `Text(.init(markdown))` parses inline markdown; if parsing fails we fall back to
@@ -79,7 +117,7 @@ private struct TextBubble: View {
     }
 }
 
-// MARK: - Tool card
+// MARK: - Tool card (compact chip)
 
 private struct ToolCardView: View {
     let tool: String
@@ -90,47 +128,85 @@ private struct ToolCardView: View {
 
     @State private var expanded = false
 
+    private var hasDetail: Bool {
+        !detail.isEmpty || (diff.map { !$0.isEmpty } ?? false)
+    }
+
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 8) {
-                if !detail.isEmpty {
-                    scrollableMono(detail)
-                }
-                if let diff, !diff.isEmpty {
-                    scrollableMono(diff)
+        // 对齐到 AI 气泡下方（左缩进越过头像 ~40）
+        VStack(alignment: .leading, spacing: 6) {
+            chip
+            if expanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !detail.isEmpty { monoBlock(detail) }
+                    if let diff, !diff.isEmpty { monoBlock(diff) }
                 }
             }
-            .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 40)
+    }
+
+    private var chip: some View {
+        Button {
+            guard hasDetail else { return }
+            withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(tool) \(title)".trimmingCharacters(in: .whitespaces))
-                    .font(.system(.footnote, design: .monospaced))
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.iconGreen)
+                Text(chipLabel)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Theme.toolMono)
                     .lineLimit(1)
                 if !summary.isEmpty {
                     Text(summary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                 }
+                if hasDetail {
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
+                }
             }
+            .padding(.vertical, 7)
+            .padding(.horizontal, 11)
+            .background(Theme.toolChipBG)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.toolChipBorder, lineWidth: 1))
         }
-        .padding(12)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .buttonStyle(.plain)
     }
 
-    private func scrollableMono(_ text: String) -> some View {
+    private var chipLabel: String {
+        let base = "\(tool) · \(title)".trimmingCharacters(in: .whitespaces)
+        return base == "·" ? "工具" : base
+    }
+
+    private func monoBlock(_ text: String) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             Text(text)
-                .font(.system(.caption, design: .monospaced))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Theme.toolMono)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(10)
         }
         .frame(maxHeight: 260)
+        .background(Theme.cream)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Theme.toolChipBorder, lineWidth: 1))
     }
 }
 
-// MARK: - Permission request card
+// MARK: - Permission request card (amber)
 
 private struct PermissionRequestCard: View {
     let requestId: String
@@ -142,45 +218,75 @@ private struct PermissionRequestCard: View {
     let onPermission: ((String, String) -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(tool.isEmpty ? "权限请求" : tool, systemImage: "lock.shield")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(spacing: 6) {
+                Image(systemName: "shield")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.amberText)
+                Text("权限请求")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.amberText)
+                if !tool.isEmpty {
+                    Text(tool)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.amberText)
+                }
+            }
             if !description.isEmpty {
                 Text(description)
-                    .font(.subheadline)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(Theme.permMono)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if isAnswered {
-                Text(resolvedCaption)
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Image(systemName: answeredChoice == "deny" ? "xmark.circle.fill" : "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                    Text(resolvedCaption)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(answeredChoice == "deny" ? Theme.denyBtnText : Theme.deepGreen)
             } else {
                 HStack(spacing: 10) {
                     Button {
                         onPermission?(requestId, "allow")
                     } label: {
-                        Text("允许").frame(maxWidth: .infinity)
+                        Text("允许")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Theme.brandGreen)
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.plain)
 
-                    Button(role: .destructive) {
+                    Button {
                         onPermission?(requestId, "deny")
                     } label: {
-                        Text("拒绝").frame(maxWidth: .infinity)
+                        Text("拒绝")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Theme.denyBtnText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Theme.cream)
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .strokeBorder(Theme.denyBtnBorder, lineWidth: 1))
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
                 }
             }
         }
-        .padding(14)
+        .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.10))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Theme.permBG)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 1)
-        )
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Theme.permBorder, lineWidth: 1))
+        .padding(.leading, 40)
     }
 
     private var resolvedCaption: String {
@@ -198,33 +304,62 @@ private struct StatusLine: View {
     let state: String
     let note: String?
 
+    @State private var pulse = false
+
     var body: some View {
-        Text(caption)
-            .font(.caption)
-            .foregroundStyle(color)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 2)
+        Group {
+            switch state {
+            case "running", "thinking":
+                runningPill
+            case "done":
+                doneCaption
+            case "failed":
+                failedCaption
+            default:
+                doneCaption
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 2)
     }
 
-    private var caption: String {
-        let base: String
-        switch state {
-        case "done": base = "✓ done"
-        case "failed": base = "✗ failed"
-        case "running": base = "● running"
-        case "thinking": base = "○ thinking"
-        default: base = state
+    private var runningPill: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Theme.runningGreen)
+                .frame(width: 7, height: 7)
+                .scaleEffect(pulse ? 1.0 : 0.6)
+                .opacity(pulse ? 1.0 : 0.4)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                        pulse = true
+                    }
+                }
+            Text(noteSuffixed(state == "thinking" ? "思考中" : "运行中"))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.deepGreen)
         }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 12)
+        .background(Theme.statusPillBG)
+        .clipShape(Capsule())
+    }
+
+    private var doneCaption: some View {
+        Text(noteSuffixed("✓ 完成"))
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textTertiary)
+    }
+
+    private var failedCaption: some View {
+        Text(noteSuffixed("✗ 失败"))
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Theme.failRed)
+    }
+
+    private func noteSuffixed(_ base: String) -> String {
         if let note, !note.isEmpty { return "\(base) · \(note)" }
         return base
-    }
-
-    private var color: Color {
-        switch state {
-        case "failed": return .red
-        case "done": return .secondary
-        default: return .secondary
-        }
     }
 }
 
@@ -234,12 +369,17 @@ private struct UnknownCard: View {
     let type: String
 
     var body: some View {
-        Text("未知事件: \(type)")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        Text("未知事件 · \(type)")
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(Color(.tertiarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.vertical, 8)
+            .padding(.horizontal, 11)
+            .background(Theme.toolChipBG)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Theme.toolChipBorder, lineWidth: 1))
+            .padding(.leading, 40)
     }
 }

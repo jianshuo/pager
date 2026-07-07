@@ -26,6 +26,11 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.chatBG.ignoresSafeArea())
+            .tint(Theme.brandGreen)
+            .toolbarBackground(Theme.barBG, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

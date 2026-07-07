@@ -67,6 +67,11 @@ struct NewConversationView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.chatBG.ignoresSafeArea())
+            .tint(Theme.brandGreen)
+            .toolbarBackground(Theme.barBG, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationTitle("新对话")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -90,10 +95,10 @@ struct NewConversationView: View {
         } label: {
             HStack {
                 Circle()
-                    .fill(machine.online ? Color.green : Color.gray)
+                    .fill(machine.online ? Theme.runningGreen : Theme.textTertiary)
                     .frame(width: 8, height: 8)
                 Text(machine.name)
-                    .foregroundStyle(machine.online ? Color.primary : Color.secondary)
+                    .foregroundStyle(machine.online ? Theme.ink : Theme.textSecondary)
                 Spacer()
                 if selectedMachineId == machine.id {
                     Image(systemName: "checkmark").foregroundStyle(.tint)

@@ -14,17 +14,23 @@ struct ConversationListView: View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 machineStrip
-                Divider()
+                Divider().overlay(Theme.creamBorder)
                 conversationList
             }
+            .background(Theme.chatBG.ignoresSafeArea())
             .navigationTitle("Pager")
+            .toolbarBackground(Theme.barBG, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .tint(Theme.brandGreen)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .tint(Theme.iconGreen)
                         .accessibilityLabel("设置")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showNew = true } label: { Image(systemName: "square.and.pencil") }
+                        .tint(Theme.iconGreen)
                         .accessibilityLabel("新对话")
                 }
             }
@@ -86,22 +92,23 @@ struct ConversationListView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 14) {
                 if model.machines.isEmpty {
-                    Text("暂无机器").font(.caption).foregroundStyle(.secondary)
+                    Text("暂无机器").font(.caption).foregroundStyle(Theme.textTertiary)
                 }
                 ForEach(sortedMachines) { machine in
                     HStack(spacing: 5) {
                         Circle()
-                            .fill(machine.online ? Color.green : Color.gray.opacity(0.5))
+                            .fill(machine.online ? Theme.runningGreen : Theme.textTertiary.opacity(0.5))
                             .frame(width: 7, height: 7)
                         Text(machine.name)
                             .font(.caption)
-                            .foregroundStyle(machine.online ? Color.primary : Color.secondary)
+                            .foregroundStyle(machine.online ? Theme.ink : Theme.textSecondary)
                     }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
+        .background(Theme.barBG)
     }
 
     private var sortedMachines: [MachineSummary] {
@@ -113,7 +120,9 @@ struct ConversationListView: View {
     private var conversationList: some View {
         List {
             if model.conversations.isEmpty {
-                Text("暂无对话").foregroundStyle(.secondary)
+                Text("暂无对话")
+                    .foregroundStyle(Theme.textSecondary)
+                    .listRowBackground(Theme.chatBG)
             }
             ForEach(model.conversations) { conv in
                 NavigationLink(value: ConvRoute(id: conv.id, machineName: conv.machineName, dir: conv.dir)) {
@@ -122,22 +131,26 @@ struct ConversationListView: View {
                         dot: statusDot(for: conv)
                     )
                 }
+                .listRowBackground(Theme.chatBG)
+                .listRowSeparatorTint(Theme.creamBorder)
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Theme.chatBG)
     }
 
     /// Derives the row's status dot from the live event stream, falling back to the REST summary
     /// state. Precedence: an unanswered permission request (🟠) outranks everything — the daemon
     /// is blocked waiting on the user. Otherwise we map the latest `status` state, preferring the
     /// live WS-derived state over the list summary's `state`.
-    private func statusDot(for conv: ConversationSummary) -> String {
-        if model.pendingPermission(for: conv.id) != nil { return "🟠" }
+    private func statusDot(for conv: ConversationSummary) -> Color {
+        if model.pendingPermission(for: conv.id) != nil { return Theme.amber }
         let state = model.latestStatus(for: conv.id) ?? conv.state
         switch state {
-        case "running": return "🟢"
-        case "failed": return "🔴"
-        default: return "⚪️"   // done / thinking / idle / unknown
+        case "running": return Theme.runningGreen
+        case "failed": return Theme.failRed
+        default: return Theme.textTertiary   // done / thinking / idle / unknown
         }
     }
 
@@ -174,19 +187,21 @@ struct ConversationListView: View {
 
 private struct ConversationRow: View {
     let summary: ConversationSummary
-    let dot: String
+    let dot: Color
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(dot).font(.caption2)
+            Circle().fill(dot).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(summary.machineName).font(.subheadline.weight(.semibold))
-                    Text(shortDir).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(summary.machineName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                    Text(shortDir).font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
                 Text(summary.lastMessage.isEmpty ? "（无消息）" : summary.lastMessage)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
             }
         }

@@ -20,11 +20,15 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             transcript
-            Divider()
+            Divider().overlay(Theme.creamBorder)
             composer
         }
+        .background(Theme.chatBG.ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(Theme.barBG, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .tint(Theme.brandGreen)
         .onAppear { model.openConversation(conv) }
         .onDisappear { model.closeConversation(conv) }
     }
@@ -49,6 +53,7 @@ struct ConversationView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
+            .background(Theme.chatBG)
             .onChange(of: events.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(bottomAnchor, anchor: .bottom)
@@ -72,27 +77,47 @@ struct ConversationView: View {
                 // v2: 语音输入占位
             } label: {
                 Image(systemName: "mic")
+                    .font(.system(size: 17))
+                    .foregroundStyle(Theme.textTertiary)
             }
             .disabled(true)
-            .foregroundStyle(.secondary)
 
-            TextField("输入消息…", text: $draft, axis: .vertical)
+            TextField("", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
+                .foregroundStyle(Theme.ink)
+                .tint(Theme.brandGreen)
                 .lineLimit(1...5)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Theme.cream)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .strokeBorder(Theme.creamBorder, lineWidth: 1))
+                .overlay(alignment: .leading) {
+                    if draft.isEmpty {
+                        Text("发消息…")
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(.leading, 14)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .onSubmit(send)
 
             Button(action: send) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 36, height: 36)
+                    .background(trimmedDraft.isEmpty ? Theme.brandGreen.opacity(0.4) : Theme.brandGreen)
+                    .clipShape(Circle())
             }
+            .buttonStyle(.plain)
             .disabled(trimmedDraft.isEmpty)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .background(Theme.barBG)
     }
 
     private var trimmedDraft: String {
