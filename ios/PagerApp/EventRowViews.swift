@@ -16,8 +16,8 @@ struct EventRow: View {
 
     var body: some View {
         switch event.body {
-        case .text(let markdown):
-            TextBubble(markdown: markdown, isUser: event.role == "user")
+        case .text(let markdown, let author):
+            TextBubble(markdown: markdown, role: event.role, author: author)
         case .toolCard(let tool, let title, let summary, let detail, let diff):
             ToolCardView(tool: tool, title: title, summary: summary, detail: detail, diff: diff)
         case .permissionRequest(let requestId, let tool, let description, let options):
@@ -50,13 +50,26 @@ struct EventRow: View {
 
 private struct TextBubble: View {
     let markdown: String
-    let isUser: Bool
+    /// Event role: "user" for human messages, "agent" for the AI.
+    let role: String
+    /// Sender display name (only present on human messages in rooms). nil ⇒ treated as mine.
+    let author: String?
+
+    /// Mine = a human message I sent (no author, or author matches my display name). Right green.
+    private var isMine: Bool {
+        role == "user" && (author == nil || author == Keychain.displayName)
+    }
+
+    /// The AI. Left cream bubble with the 百姓AI label + atom avatar.
+    private var isAgent: Bool { role == "agent" }
 
     var body: some View {
-        if isUser {
+        if isMine {
             userBubble
-        } else {
+        } else if isAgent {
             aiBubble
+        } else {
+            humanBubble
         }
     }
 
@@ -98,6 +111,34 @@ private struct TextBubble: View {
                             topLeadingRadius: 5, bottomLeadingRadius: 16,
                             bottomTrailingRadius: 16, topTrailingRadius: 16, style: .continuous)
                             .strokeBorder(Theme.aiBubbleBorder, lineWidth: 1))
+            }
+            Spacer(minLength: 40)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // 另一个人：奶白气泡，左对齐，左上角 5px；上方灰绿名字，左侧首字母头像（按名字取稳定颜色）
+    private var humanBubble: some View {
+        let name = author ?? ""
+        return HStack(alignment: .top, spacing: 8) {
+            HumanAvatar(name: name, size: 32)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Theme.textSecondary)
+                rendered
+                    .foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
+                    .background(Theme.cream)
+                    .clipShape(UnevenRoundedRectangle(
+                        topLeadingRadius: 5, bottomLeadingRadius: 16,
+                        bottomTrailingRadius: 16, topTrailingRadius: 16, style: .continuous))
+                    .overlay(
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: 5, bottomLeadingRadius: 16,
+                            bottomTrailingRadius: 16, topTrailingRadius: 16, style: .continuous)
+                            .strokeBorder(Theme.creamBorder, lineWidth: 1))
             }
             Spacer(minLength: 40)
         }

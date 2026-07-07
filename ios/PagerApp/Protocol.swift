@@ -1,7 +1,7 @@
 import Foundation
 
 enum EventBody {
-    case text(markdown: String)
+    case text(markdown: String, author: String?)
     case toolCard(tool: String, title: String, summary: String, detail: String, diff: String?)
     case permissionRequest(requestId: String, tool: String, description: String, options: [String])
     case permissionResponse(requestId: String, choice: String)
@@ -36,7 +36,7 @@ struct Event: Decodable, Identifiable {
     }
 
     enum BodyKeys: String, CodingKey {
-        case markdown, tool, title, summary, detail, diff
+        case markdown, author, tool, title, summary, detail, diff
         case request_id, description, options, choice, state, note, message, recoverable
     }
 
@@ -44,7 +44,8 @@ struct Event: Decodable, Identifiable {
                            raw: KeyedDecodingContainer<CodingKeys>, forKey: CodingKeys) throws -> EventBody {
         switch type {
         case "text":
-            return .text(markdown: (try? b.decode(String.self, forKey: .markdown)) ?? "")
+            return .text(markdown: (try? b.decode(String.self, forKey: .markdown)) ?? "",
+                         author: try? b.decode(String.self, forKey: .author))
         case "tool_card":
             return .toolCard(
                 tool: (try? b.decode(String.self, forKey: .tool)) ?? "",
@@ -132,8 +133,8 @@ extension Event {
     /// Applies a `patch` frame: hub patches replace (not append to) a text event's markdown
     /// in place. Returns `self` unchanged if this event isn't a `.text` event.
     func withPatchedText(_ markdown: String) -> Event {
-        guard case .text = body else { return self }
-        return Event(id: id, conv: conv, seq: seq, ts: ts, role: role, agent: agent, type: type, body: .text(markdown: markdown))
+        guard case .text(_, let author) = body else { return self }
+        return Event(id: id, conv: conv, seq: seq, ts: ts, role: role, agent: agent, type: type, body: .text(markdown: markdown, author: author))
     }
 }
 

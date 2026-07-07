@@ -161,12 +161,19 @@ struct ConversationView: View {
 
     private var title: String {
         if let summary = model.conversations.first(where: { $0.id == conv }) {
-            return "\(summary.machineName) · \(shorten(summary.dir))"
+            return titled(name: summary.machineName, dir: summary.dir)
         }
         if let machineName {
-            return dir.map { "\(machineName) · \(shorten($0))" } ?? machineName
+            return titled(name: machineName, dir: dir ?? "")
         }
         return "对话"
+    }
+
+    /// A room has an empty dir — show just its title (no "· " suffix). A machine session shows
+    /// "<machine> · <lastPathComponent>".
+    private func titled(name: String, dir: String) -> String {
+        let short = shorten(dir)
+        return short.isEmpty ? name : "\(name) · \(short)"
     }
 
     private func shorten(_ path: String) -> String {

@@ -56,3 +56,41 @@ struct AIAvatar: View {
         .frame(width: size, height: size)
     }
 }
+
+/// Avatar for another human in a room: a solid circle in a stable per-name color with the
+/// name's first character. Amber is reserved for the AI, so this palette stays green/teal/olive.
+struct HumanAvatar: View {
+    let name: String
+    var size: CGFloat = 32
+
+    /// Matcha-friendly palette (no amber). A deterministic hash of the name picks one, so a given
+    /// name always maps to the same color — across launches, not just within one session.
+    private static let palette: [Color] = [
+        Color(hex: 0x86A15C), // brandGreen
+        Color(hex: 0x62823C), // deepGreen
+        Color(hex: 0x6A8544), // iconGreen
+        Color(hex: 0x5F8C7E), // teal
+        Color(hex: 0x8A7A4A), // olive
+        Color(hex: 0x7A8C4C), // moss
+    ]
+
+    private var color: Color {
+        guard !name.isEmpty else { return Theme.textTertiary }
+        let sum = name.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        return Self.palette[sum % Self.palette.count]
+    }
+
+    private var initial: String {
+        String(name.prefix(1)).uppercased()
+    }
+
+    var body: some View {
+        ZStack {
+            Circle().fill(color)
+            Text(initial)
+                .font(.system(size: size * 0.44, weight: .bold))
+                .foregroundStyle(Color.white)
+        }
+        .frame(width: size, height: size)
+    }
+}

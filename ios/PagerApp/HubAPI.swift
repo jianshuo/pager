@@ -78,6 +78,23 @@ struct HubAPI: Sendable {
         }
     }
 
+    /// Creates a machine-less "room" (a human-to-human conversation) via POST /api/rooms.
+    /// Returns the new conversation id from the 201 `{id}` body.
+    func createRoom(title: String) async throws -> String {
+        let body = try JSONEncoder().encode(CreateRoomRequestBody(title: title))
+        let request = try makeRequest(path: "/api/rooms", method: "POST", body: body)
+        let (data, response) = try await session.data(for: request)
+        let http = try Self.httpResponse(response)
+        switch http.statusCode {
+        case 201:
+            return try JSONDecoder().decode(NewConversationResponseBody.self, from: data).id
+        case 400:
+            throw HubError.badRequest(Self.errorMessage(from: data) ?? "bad request")
+        default:
+            throw HubError.http(http.statusCode, Self.errorMessage(from: data) ?? "")
+        }
+    }
+
     func permissionResponse(conv: String, requestId: String, choice: String) async throws {
         let body = try JSONEncoder().encode(
             PermissionResponseRequestBody(conv: conv, request_id: requestId, choice: choice)
@@ -152,6 +169,10 @@ private struct NewConversationRequestBody: Encodable {
 
 private struct NewConversationResponseBody: Decodable {
     let id: String
+}
+
+private struct CreateRoomRequestBody: Encodable {
+    let title: String
 }
 
 private struct PermissionResponseRequestBody: Encodable {

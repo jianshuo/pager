@@ -9,6 +9,7 @@ enum Keychain {
     private static let service = "dev.pager"
     private static let tokenAccount = "clientToken"
     private static let hubURLDefaultsKey = "dev.pager.hubURL"
+    private static let displayNameDefaultsKey = "dev.pager.displayName"
 
     static var token: String? {
         get { readString(account: tokenAccount) }
@@ -24,6 +25,19 @@ enum Keychain {
     static var hubURL: String {
         get { UserDefaults.standard.string(forKey: hubURLDefaultsKey) ?? defaultHubURL }
         set { UserDefaults.standard.set(newValue, forKey: hubURLDefaultsKey) }
+    }
+
+    /// The user's display name, attached to every human message they send (`body.author`) so
+    /// peers in a room can tell who's talking. Not secret — stored in UserDefaults. Defaults to "我".
+    static var displayName: String {
+        get {
+            let stored = UserDefaults.standard.string(forKey: displayNameDefaultsKey) ?? ""
+            return stored.isEmpty ? "我" : stored
+        }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            UserDefaults.standard.set(trimmed, forKey: displayNameDefaultsKey)
+        }
     }
 
     // MARK: - SecItem plumbing

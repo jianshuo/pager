@@ -5,10 +5,15 @@ struct SettingsView: View {
 
     @State private var token: String = Keychain.token ?? ""
     @State private var hubURLString: String = Keychain.hubURL
+    @State private var displayName: String = Keychain.displayName
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("我的昵称") {
+                    TextField("我的昵称", text: $displayName)
+                        .autocorrectionDisabled()
+                }
                 Section("Hub 地址") {
                     TextField("Hub URL", text: $hubURLString)
                         .textInputAutocapitalization(.never)
@@ -50,6 +55,9 @@ struct SettingsView: View {
 
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         Keychain.token = trimmedToken.isEmpty ? nil : trimmedToken
+
+        // 空昵称 → getter 回落到默认「我」。
+        Keychain.displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         dismiss()
     }

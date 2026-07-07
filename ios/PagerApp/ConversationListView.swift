@@ -7,6 +7,8 @@ struct ConversationListView: View {
 
     @State private var path: [ConvRoute] = []
     @State private var showNew = false
+    @State private var showNewRoom = false
+    @State private var roomTitle = ""
     @State private var showSettings = false
     @State private var toast: String?
 
@@ -29,9 +31,14 @@ struct ConversationListView: View {
                         .accessibilityLabel("设置")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showNew = true } label: { Image(systemName: "square.and.pencil") }
-                        .tint(Theme.iconGreen)
-                        .accessibilityLabel("新对话")
+                    Menu {
+                        Button { showNewRoom = true } label: { Label("新建群聊", systemImage: "person.2") }
+                        Button { showNew = true } label: { Label("让 AI 干活", systemImage: "sparkles") }
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .tint(Theme.iconGreen)
+                    .accessibilityLabel("新对话")
                 }
             }
             .navigationDestination(for: ConvRoute.self) { route in
@@ -81,6 +88,13 @@ struct ConversationListView: View {
             }
             .sheet(isPresented: $showSettings, onDismiss: { Task { await refresh() } }) {
                 SettingsView()
+            }
+            .alert("新建群聊", isPresented: $showNewRoom) {
+                TextField("群聊名称", text: $roomTitle)
+                Button("取消", role: .cancel) { roomTitle = "" }
+                Button("创建") { createRoom() }
+            } message: {
+                Text("给这个群聊起个名字，邀请其他人一起聊。")
             }
             .overlay(alignment: .bottom) { toastView }
         }
@@ -161,6 +175,22 @@ struct ConversationListView: View {
         await model.refreshConversations()
     }
 
+    /// Creates a machine-less room via POST /api/rooms and navigates into it. On failure shows a toast.
+    private func createRoom() {
+        let title = roomTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        roomTitle = ""
+        guard !title.isEmpty else { return }
+        Task {
+            do {
+                let id = try await HubAPI().createRoom(title: title)
+                path.append(ConvRoute(id: id, machineName: title, dir: ""))
+                await refresh()
+            } catch {
+                showToast("创建群聊失败")
+            }
+        }
+    }
+
     private func showToast(_ text: String) {
         toast = text
         Task {
@@ -197,7 +227,9 @@ private struct ConversationRow: View {
                     Text(summary.machineName)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.ink)
-                    Text(shortDir).font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    if !shortDir.isEmpty {
+                        Text(shortDir).font(.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    }
                 }
                 Text(summary.lastMessage.isEmpty ? "（无消息）" : summary.lastMessage)
                     .font(.footnote)

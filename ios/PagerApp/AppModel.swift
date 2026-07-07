@@ -108,7 +108,7 @@ final class AppModel {
             role: "user",
             agent: "claude-code",
             type: "text",
-            body: ["markdown": .string(markdown)]
+            body: ["markdown": .string(markdown), "author": .string(Keychain.displayName)]
         )
         ws.send(.send(conv: conv, event: draft))
     }

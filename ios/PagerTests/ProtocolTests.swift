@@ -10,10 +10,29 @@ final class ProtocolTests: XCTestCase {
     func testTextEventDecodesMarkdown() throws {
         let json = #"{"id":"evt_1","conv":"cnv_1","seq":1,"ts":1751780000,"role":"agent","agent":"claude-code","type":"text","body":{"markdown":"hello **world**"}}"#
         let e = try decodeEvent(json)
-        guard case .text(let markdown) = e.body else {
+        guard case .text(let markdown, _) = e.body else {
             return XCTFail("expected .text, got \(e.body)")
         }
         XCTAssertEqual(markdown, "hello **world**")
+    }
+
+    func testTextEventDecodesAuthorInRoom() throws {
+        let json = #"{"id":"evt_r","conv":"cnv_room","seq":1,"ts":1751780000,"role":"user","agent":"claude-code","type":"text","body":{"markdown":"hi","author":"小林"}}"#
+        let e = try decodeEvent(json)
+        guard case .text(let markdown, let author) = e.body else {
+            return XCTFail("expected .text, got \(e.body)")
+        }
+        XCTAssertEqual(markdown, "hi")
+        XCTAssertEqual(author, "小林")
+    }
+
+    func testTextEventWithoutAuthorHasNilAuthor() throws {
+        let json = #"{"id":"evt_n","conv":"cnv_1","seq":1,"ts":1751780000,"role":"agent","agent":"claude-code","type":"text","body":{"markdown":"hello"}}"#
+        let e = try decodeEvent(json)
+        guard case .text(_, let author) = e.body else {
+            return XCTFail("expected .text, got \(e.body)")
+        }
+        XCTAssertNil(author)
     }
 
     func testToolCardEventDecodesFields() throws {

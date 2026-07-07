@@ -67,7 +67,7 @@ final class AppModelTests: XCTestCase {
 
         let events = model.events(for: "cnv_1")
         XCTAssertEqual(events.count, 1)
-        guard case .text(let markdown) = events[0].body else {
+        guard case .text(let markdown, _) = events[0].body else {
             return XCTFail("expected .text, got \(events[0].body)")
         }
         XCTAssertEqual(markdown, "final")
@@ -112,7 +112,7 @@ final class AppModelTests: XCTestCase {
 
         let events = model.events(for: "cnv_1")
         XCTAssertEqual(events.count, 1)
-        guard case .text(let markdown) = events[0].body else {
+        guard case .text(let markdown, _) = events[0].body else {
             return XCTFail("expected .text, got \(events[0].body)")
         }
         XCTAssertEqual(markdown, "final")
