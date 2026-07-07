@@ -161,6 +161,14 @@ export class UserDO extends DurableObject<Env> {
     }
   }
 
+  async webSocketClose(): Promise<void> {
+    // 客户端断连无需簿记：广播用 getWebSockets() 实时枚举
+  }
+
+  async webSocketError(): Promise<void> {
+    // 同上；定义空处理器避免运行时对未定义 handler 报 TypeError
+  }
+
   private broadcast(obj: unknown): void {
     const s = JSON.stringify(obj);
     for (const ws of this.ctx.getWebSockets()) ws.send(s);
