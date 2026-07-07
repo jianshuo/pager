@@ -35,6 +35,7 @@ struct ConversationListView: View {
             .task {
                 model.connect()   // idempotent; scenePhase .active may not fire on cold launch
                 await refresh()
+                #if DEBUG
                 // 开发便利：SIMCTL_CHILD_PAGER_DEBUG_OPEN_CONV 指定的会话在刷新后自动打开
                 // （模拟器活体测试用，避开 openurl 的系统确认弹窗）。生产无此变量即空操作。
                 if let cid = ProcessInfo.processInfo.environment["PAGER_DEBUG_OPEN_CONV"],
@@ -42,6 +43,7 @@ struct ConversationListView: View {
                     let s = model.conversations.first { $0.id == cid }
                     path.append(ConvRoute(id: cid, machineName: s?.machineName ?? "建硕的 Mac", dir: s?.dir ?? ""))
                 }
+                #endif
             }
             // 深链 pager://conversation/<convId>：APNs 通知点按 + 活体测试用。
             // 机器名/目录从已刷新的会话列表里查；查不到就留空（事件按 conv id 键，仍能流）。

@@ -56,6 +56,12 @@ final class ClientWS: WSClient {
     private let maxBackoff: Double = 30
     private var currentBackoff: Double = 1
 
+    /// Guards `onConnected`/`resetBackoff` so they fire exactly once per successfully-opened
+    /// socket (on the first frame received), not once per `connect()` attempt. Reset to
+    /// `false` at the top of every `connect()` so a reconnect re-fires `onConnected` after the
+    /// new socket actually comes up.
+    private var didSignalConnect = false
+
     init(
         session: URLSession = .shared,
         baseURLProvider: @escaping () -> String = { Keychain.hubURL },
@@ -80,10 +86,9 @@ final class ClientWS: WSClient {
         let task = session.webSocketTask(with: request)
         webSocketTask = task
         shouldReconnect = true
-        resetBackoff()
+        didSignalConnect = false
         task.resume()
         startReceiving(task)
-        onConnected?()
     }
 
     /// Closes the socket and stops any pending reconnect. Call on background.
@@ -141,7 +146,11 @@ final class ClientWS: WSClient {
         while !Task.isCancelled {
             do {
                 let message = try await task.receive()
-                resetBackoff()
+                if !didSignalConnect {
+                    didSignalConnect = true
+                    resetBackoff()
+                    onConnected?()
+                }
                 handle(message: message)
             } catch {
                 if Task.isCancelled { return }
