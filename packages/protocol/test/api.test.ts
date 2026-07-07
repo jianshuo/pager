@@ -3,6 +3,7 @@ import {
   MachineSummary,
   ConversationSummary,
   NewConversationRequest,
+  NewConversationResponse,
   PermissionResponseRequest,
   DeviceRegistration,
   newId,
@@ -41,6 +42,11 @@ describe("REST DTO", () => {
       PermissionResponseRequest.parse({ conv: "cnv_1", request_id: "r1", choice: "allow" }).choice
     ).toBe("allow");
     expect(DeviceRegistration.parse({ deviceToken: "abc" }).deviceToken).toBe("abc");
+  });
+
+  it("解析 NewConversationResponse 并拒绝错误前缀", () => {
+    expect(NewConversationResponse.parse({ id: "cnv_1" }).id).toBe("cnv_1");
+    expect(() => NewConversationResponse.parse({ id: "x_1" })).toThrow();
   });
 });
 

@@ -39,3 +39,8 @@ export const DeviceRegistration = z.object({
   deviceToken: z.string(),
 });
 export type DeviceRegistration = z.infer<typeof DeviceRegistration>;
+
+export const NewConversationResponse = z.object({
+  id: z.string().startsWith("cnv_"),
+});
+export type NewConversationResponse = z.infer<typeof NewConversationResponse>;
