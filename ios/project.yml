@@ -25,7 +25,7 @@ targets:
     entitlements:
       path: PagerApp/Pager.entitlements
       properties:
-        aps-environment: development
+        aps-environment: production
     settings:
       base:
         SWIFT_VERSION: "6.0"

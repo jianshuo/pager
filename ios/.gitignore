@@ -2,3 +2,11 @@
 DerivedData/
 Secrets.xcconfig
 .DS_Store
+vendor/
+fastlane/report.xml
+fastlane/README.md
+.bundle/
+*.ipa
+*.app.dSYM.zip
+fastlane/report.xml
+fastlane/Preview.html
