@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { ClientToHub } from "@pager/protocol";
 import type { Env } from "./env.js";
 import type { NotifyBody } from "./conversation-do.js";
+import { pushPlanFor, sendApns, type ApnsConfig } from "./apns.js";
 
 export class UserDO extends DurableObject<Env> {
   private sql = this.ctx.storage.sql;
@@ -105,8 +106,37 @@ export class UserDO extends DurableObject<Env> {
       body.summary.updatedAt
     );
     this.broadcast({ kind: "event", event: body.event });
-    // Task 6 在这里追加：无客户端在线时按规则 APNs
+    if (this.ctx.getWebSockets().length === 0) await this.maybePush(body);
     return Response.json({ ok: true });
+  }
+
+  private async maybePush(body: NotifyBody): Promise<void> {
+    const env = this.env;
+    if (!env.APNS_TEAM_ID || !env.APNS_KEY_ID || !env.APNS_P8 || !env.APNS_BUNDLE_ID) return; // 未配置：静默跳过
+    const plan = pushPlanFor(body.event, { machineName: body.meta.machineName });
+    if (!plan) return;
+    const cfg: ApnsConfig = {
+      teamId: env.APNS_TEAM_ID,
+      keyId: env.APNS_KEY_ID,
+      p8Pem: env.APNS_P8,
+      bundleId: env.APNS_BUNDLE_ID,
+      env: env.APNS_ENV ?? "production",
+    };
+    const rows = [...this.sql.exec("SELECT token FROM devices")];
+    for (const row of rows) {
+      const payload: Record<string, unknown> = { conv: body.conv };
+      if (plan.request_id) payload.request_id = plan.request_id;
+      const r = await sendApns(cfg, {
+        deviceToken: row.token as string,
+        title: plan.title,
+        body: plan.body,
+        priority: plan.priority,
+        category: plan.category,
+        threadId: body.conv,
+        payload,
+      });
+      if (r.gone) this.sql.exec("DELETE FROM devices WHERE token = ?", row.token);
+    }
   }
 
   private machineStatus(body: {
