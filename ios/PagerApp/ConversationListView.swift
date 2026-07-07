@@ -8,7 +8,6 @@ struct ConversationListView: View {
     @State private var path: [ConvRoute] = []
     @State private var showNew = false
     @State private var showNewRoom = false
-    @State private var roomTitle = ""
     @State private var showSettings = false
     @State private var toast: String?
 
@@ -89,12 +88,11 @@ struct ConversationListView: View {
             .sheet(isPresented: $showSettings, onDismiss: { Task { await refresh() } }) {
                 SettingsView()
             }
-            .alert("新建群聊", isPresented: $showNewRoom) {
-                TextField("群聊名称", text: $roomTitle)
-                Button("取消", role: .cancel) { roomTitle = "" }
-                Button("创建") { createRoom() }
-            } message: {
-                Text("给这个群聊起个名字，邀请其他人一起聊。")
+            .sheet(isPresented: $showNewRoom) {
+                NewRoomView(onCreated: { route in
+                    path.append(route)
+                    Task { await refresh() }
+                })
             }
             .overlay(alignment: .bottom) { toastView }
         }
@@ -160,7 +158,10 @@ struct ConversationListView: View {
     /// live WS-derived state over the list summary's `state`.
     private func statusDot(for conv: ConversationSummary) -> Color {
         if model.pendingPermission(for: conv.id) != nil { return Theme.amber }
-        let state = model.latestStatus(for: conv.id) ?? conv.state
+        // Rooms behave like conversations: an AI-bound room can go "running" while the AI works,
+        // but a room with no live status has no machine failure state — show neutral, not red.
+        let live = model.latestStatus(for: conv.id)
+        let state = conv.kind == "room" ? (live ?? "idle") : (live ?? conv.state)
         switch state {
         case "running": return Theme.runningGreen
         case "failed": return Theme.failRed
@@ -173,22 +174,6 @@ struct ConversationListView: View {
     private func refresh() async {
         await model.refreshMachines()
         await model.refreshConversations()
-    }
-
-    /// Creates a machine-less room via POST /api/rooms and navigates into it. On failure shows a toast.
-    private func createRoom() {
-        let title = roomTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        roomTitle = ""
-        guard !title.isEmpty else { return }
-        Task {
-            do {
-                let id = try await HubAPI().createRoom(title: title)
-                path.append(ConvRoute(id: id, machineName: title, dir: ""))
-                await refresh()
-            } catch {
-                showToast("创建群聊失败")
-            }
-        }
     }
 
     private func showToast(_ text: String) {

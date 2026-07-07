@@ -13,9 +13,13 @@ struct ConversationView: View {
     @Environment(AppModel.self) private var model
 
     @State private var draft = ""
+    @FocusState private var composerFocused: Bool
     /// Permission request_ids answered locally this session, mapped to the chosen option, so the
     /// buttons flip to a resolved state immediately — before the broadcast echo arrives.
     @State private var locallyAnswered: [String: String] = [:]
+
+    /// The AI mention token the hub detects in an AI-enabled room.
+    private let aiMention = "@百姓AI"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,6 +75,12 @@ struct ConversationView: View {
 
     // MARK: - Composer
 
+    /// Whether this conversation is an AI-enabled room (a room with a bound machine+dir). Only such
+    /// rooms show the "@AI" pill and honor an "@百姓AI" mention. Derived from the list summary.
+    private var isAIRoom: Bool {
+        model.conversations.first(where: { $0.id == conv })?.isAIRoom ?? false
+    }
+
     private var composer: some View {
         HStack(spacing: 8) {
             Button {
@@ -82,7 +92,23 @@ struct ConversationView: View {
             }
             .disabled(true)
 
+            if isAIRoom {
+                Button(action: mentionAI) {
+                    Text("@AI")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.deepGreen)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Theme.statusPillBG)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.brandGreen.opacity(0.4), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("@百姓AI")
+            }
+
             TextField("", text: $draft, axis: .vertical)
+                .focused($composerFocused)
                 .textFieldStyle(.plain)
                 .foregroundStyle(Theme.ink)
                 .tint(Theme.brandGreen)
@@ -129,6 +155,15 @@ struct ConversationView: View {
         guard !text.isEmpty else { return }
         model.sendText(conv: conv, markdown: text)
         draft = ""
+    }
+
+    /// Prepends the AI mention token (if not already present) and focuses the field so the user
+    /// can type the task. The hub detects "@百姓AI" in the sent text and dispatches the Claude task.
+    private func mentionAI() {
+        if !draft.contains(aiMention) {
+            draft = draft.isEmpty ? "\(aiMention) " : "\(aiMention) \(draft)"
+        }
+        composerFocused = true
     }
 
     // MARK: - Permission handling

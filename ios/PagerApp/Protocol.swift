@@ -108,6 +108,38 @@ struct MachineSummary: Decodable, Identifiable {
 struct ConversationSummary: Decodable, Identifiable {
     let id: String; let machineId: String; let machineName: String; let dir: String
     let state: String; let lastMessage: String; let lastSeq: Int; let updatedAt: Int
+    /// "room" | "machine". The hub only recently added this; older responses omit it, so we
+    /// default to "machine" when the key is absent to stay backward compatible.
+    let kind: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, machineId, machineName, dir, state, lastMessage, lastSeq, updatedAt, kind
+    }
+
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        machineId = try c.decode(String.self, forKey: .machineId)
+        machineName = try c.decode(String.self, forKey: .machineName)
+        dir = try c.decode(String.self, forKey: .dir)
+        state = try c.decode(String.self, forKey: .state)
+        lastMessage = try c.decode(String.self, forKey: .lastMessage)
+        lastSeq = try c.decode(Int.self, forKey: .lastSeq)
+        updatedAt = try c.decode(Int.self, forKey: .updatedAt)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? "machine"
+    }
+
+    /// Memberwise initializer for tests/previews (the custom `init(from:)` suppresses synthesis).
+    init(id: String, machineId: String, machineName: String, dir: String,
+         state: String, lastMessage: String, lastSeq: Int, updatedAt: Int, kind: String = "machine") {
+        self.id = id; self.machineId = machineId; self.machineName = machineName; self.dir = dir
+        self.state = state; self.lastMessage = lastMessage; self.lastSeq = lastSeq
+        self.updatedAt = updatedAt; self.kind = kind
+    }
+
+    /// An AI-enabled room: a room conversation with a machine+dir bound as the AI's workspace.
+    /// In such a room, "@百姓AI" in a message dispatches a Claude task to the bound daemon.
+    var isAIRoom: Bool { kind == "room" && !machineId.isEmpty }
 }
 
 // 上行草稿（无 seq）

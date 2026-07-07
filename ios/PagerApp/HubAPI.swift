@@ -78,10 +78,11 @@ struct HubAPI: Sendable {
         }
     }
 
-    /// Creates a machine-less "room" (a human-to-human conversation) via POST /api/rooms.
-    /// Returns the new conversation id from the 201 `{id}` body.
-    func createRoom(title: String) async throws -> String {
-        let body = try JSONEncoder().encode(CreateRoomRequestBody(title: title))
+    /// Creates a "room" conversation via POST /api/rooms. With no binding it's a human-to-human
+    /// room; pass `machineId`+`dir` to make it an AI-enabled room where "@百姓AI" dispatches a
+    /// Claude task to the bound daemon. Returns the new conversation id from the 201 `{id}` body.
+    func createRoom(title: String, machineId: String? = nil, dir: String? = nil) async throws -> String {
+        let body = try JSONEncoder().encode(CreateRoomRequestBody(title: title, machineId: machineId, dir: dir))
         let request = try makeRequest(path: "/api/rooms", method: "POST", body: body)
         let (data, response) = try await session.data(for: request)
         let http = try Self.httpResponse(response)
@@ -173,6 +174,17 @@ private struct NewConversationResponseBody: Decodable {
 
 private struct CreateRoomRequestBody: Encodable {
     let title: String
+    let machineId: String?
+    let dir: String?
+
+    // Only emit machineId/dir when bound (AI-enabled room); a plain room sends just {title}.
+    enum CodingKeys: String, CodingKey { case title, machineId, dir }
+    func encode(to e: Encoder) throws {
+        var c = e.container(keyedBy: CodingKeys.self)
+        try c.encode(title, forKey: .title)
+        try c.encodeIfPresent(machineId, forKey: .machineId)
+        try c.encodeIfPresent(dir, forKey: .dir)
+    }
 }
 
 private struct PermissionResponseRequestBody: Encodable {
