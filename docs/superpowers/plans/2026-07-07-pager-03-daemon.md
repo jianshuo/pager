@@ -22,6 +22,16 @@
 - 权限：SDK `canUseTool` → `permission_request` 事件 → 等 `permission_response`（配置超时，默认 3600s，超时 deny）。`allow_always` v1 按 allow 处理（会话内白名单留 v2）。
 - VPS systemd 部署**不在本计划**（等 04-ios 后有真实需求再做），本计划只装这台 Mac。
 
+## 落地修正（执行后补记，代码为准）
+
+- **依赖版本**：`@anthropic-ai/claude-agent-sdk` 实际固定 `0.3.202`；daemon 用 zod ^4（SDK peerDep 硬要求），protocol/hub 保持 zod 3——两份隔离拷贝，无 schema 跨界（已实测）。
+- **adapter 与真 SDK 对齐**：`canUseTool` 是 3 参 `(tool, input, options)`；首条 stream 消息是 `system:hook_started` 非 `init`（靠 `subtype==="init"` 定位，顺序无关）；result 判错用 `is_error===true || subtype!=="success"`；`randomUUID` 从 `node:crypto` 导入（strict NodeNext 下 global crypto 无类型）。
+- **★launchd 集成两处关键修正**（真机 e2e 才暴露，foreground 测不出）：
+  1. **`settingSources: ["project","local"]`**——不加载用户级 `~/.claude/settings.json`。用户的交互式 hooks（VibeLight/CCLight 等菜单栏 GUI 助手的 SessionStart/PreToolUse 等）在 launchd 无 GUI 会话下**阻塞**，卡死整个 Claude 会话（`query()` 永不 yield init）。排除 user 层后 project/local 设置仍生效。
+  2. **plist PATH 含 `$HOME/.local/bin`**——Agent SDK 会 spawn `claude` CLI（在 `~/.local/bin`），默认 launchd PATH 找不到。
+- **install 脚本坑**：变量紧邻中文标点要加花括号（`${LABEL}；` 不是 `$LABEL；`），否则 `set -u` 把中文字节当变量名报 unbound。
+- **e2e 提示词锚定 pwd**：早期 "在当前目录创建文件" 会让 Claude 漂移到 `$HOME`；改成 "先 pwd 确认再在那个目录创建"，并按 `realpathSync`（/tmp→/private/tmp）校验。
+
 ## Global Constraints
 
 - `daemon/` 包名 `@pager/daemon`，private；root workspaces 加 `"daemon"`。

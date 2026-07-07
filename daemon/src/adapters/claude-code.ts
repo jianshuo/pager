@@ -75,6 +75,10 @@ async function runLoop(opts: RunOptions, queryFn: typeof query, abort: AbortCont
       includePartialMessages: true,
       permissionMode: opts.permissionMode as any,
       canUseTool,
+      // 不加载用户级设置：~/.claude/settings.json 里的交互式钩子（VibeLight/
+      // CCLight 等菜单栏 GUI 助手）在 launchd 无 GUI 会话下会阻塞，卡死整个
+      // 会话。只保留 project/local 设置（项目权限/MCP/CLAUDE.md 仍生效）。
+      settingSources: ["project", "local"],
     } as any,
   });
 
