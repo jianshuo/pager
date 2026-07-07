@@ -61,6 +61,15 @@ struct ConversationListView: View {
             // 深链 pager://conversation/<convId>：APNs 通知点按 + 活体测试用。
             // 机器名/目录从已刷新的会话列表里查；查不到就留空（事件按 conv id 键，仍能流）。
             .onOpenURL { url in
+                // pager://pair?token=…&hub=…&name=… — 扫 Mac 端二维码即配对：存 token、连接、刷新。
+                if url.scheme == "pager", url.host == "pair" {
+                    Task {
+                        let ok = await model.pair(from: url)
+                        showToast(ok ? "已配对，正在连接…" : "配对二维码无效")
+                        if ok { await refresh() }
+                    }
+                    return
+                }
                 guard url.scheme == "pager", url.host == "conversation" else { return }
                 let convId = url.lastPathComponent
                 guard convId.hasPrefix("cnv_") else { return }

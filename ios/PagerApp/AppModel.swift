@@ -134,6 +134,35 @@ final class AppModel {
         }
     }
 
+    // MARK: - Pairing (QR / deep link)
+
+    /// Applies a `pager://pair?token=…&hub=…&name=…` deep link — the payload of the QR code the
+    /// Mac-side `pair-qr` script prints. Stores the workspace token (plus optional hub URL and
+    /// display name) into the Keychain, drops any stale personal token so `ensureRegistered`
+    /// mints a fresh one under the (possibly new) name, then reconnects the WS and refreshes the
+    /// lists. Returns false without changing anything if the URL carries no usable token.
+    func pair(from url: URL) async -> Bool {
+        guard url.scheme == "pager", url.host == "pair",
+              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        let items = comps.queryItems ?? []
+        func value(_ name: String) -> String? {
+            items.first { $0.name == name }?.value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let token = value("token"), !token.isEmpty else { return false }
+
+        Keychain.token = token
+        if let hub = value("hub"), !hub.isEmpty { Keychain.hubURL = hub }
+        if let name = value("name"), !name.isEmpty { Keychain.displayName = name }
+        Keychain.userToken = nil   // new workspace token invalidates the old personal identity
+
+        disconnect()
+        await ensureRegistered()   // personal token under the paired name, before the WS opens
+        connect()
+        await refreshMachines()
+        await refreshConversations()
+        return true
+    }
+
     // MARK: - Permission response (REST)
 
     /// Answers a pending permission request via REST (the hub relays it to the daemon and
