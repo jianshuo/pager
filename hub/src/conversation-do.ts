@@ -1,22 +1,25 @@
 import { DurableObject } from "cloudflare:workers";
-import { EventDraftLoose, StatusBody, type EventLoose } from "@pager/protocol";
+import { EventDraftLoose, type EventLoose } from "@pager/protocol";
 import { ZodError } from "zod";
 import type { Env } from "./env.js";
 
+// 一条会话（1:1 或群）：成员名单 + 消息流。发消息时按成员扇出到各自的 UserDO。
 export interface ConvMeta {
-  machineId: string;
-  machineName: string;
-  dir: string;
-  agentSessionId?: string;
-  state: string;
+  kind: "direct" | "group";
+  title: string; // 群名；1:1 为空
+  createdBy: string; // userId
 }
 
+export interface Member {
+  userId: string;
+  username: string;
+}
+
+// 会话 → 每个成员 UserDO 的投递体。UserDO 据此更新会话索引、推送在线设备/APNs。
 export interface NotifyBody {
   conv: string;
   event: EventLoose;
-  meta: ConvMeta;
-  // status 事件不代表一条可展示的正文：lastMessage 为 null 时，UserDO 保留会话列表里上一条的值
-  summary: { state: string; lastMessage: string | null; lastSeq: number; updatedAt: number };
+  summary: { lastMessage: string | null; lastSeq: number; updatedAt: number };
 }
 
 export class ConversationDO extends DurableObject<Env> {
@@ -31,78 +34,76 @@ export class ConversationDO extends DurableObject<Env> {
         json TEXT NOT NULL
       )`
     );
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS members (
+        user_id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        joined_at INTEGER NOT NULL
+      )`
+    );
   }
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    const key = `${req.method} ${url.pathname}`;
     try {
-      switch (`${req.method} ${url.pathname}`) {
-        case "POST /init":
-          return await this.init(await req.json());
-        case "POST /ingest":
-          // return await（而非 return）：否则 promise rejection 会绕过本层 catch，ZodError 变 500
-          return await this.ingest(await req.json());
-        case "POST /patch":
-          return await this.patch(await req.json());
-        case "POST /session":
-          return await this.session(await req.json());
-        case "GET /events":
-          return this.events(Number(url.searchParams.get("after") ?? "0"));
-        case "GET /meta":
-          return Response.json((await this.ctx.storage.get<ConvMeta>("meta")) ?? null);
-        default:
-          return new Response("not found", { status: 404 });
-      }
+      if (key === "POST /init") return await this.init(await req.json());
+      if (key === "POST /ingest") return await this.ingest(await req.json());
+      if (key === "POST /patch") return await this.patch(await req.json());
+      if (key === "POST /members") return await this.addMember(await req.json());
+      if (key === "GET /members") return this.listMembers();
+      if (req.method === "DELETE" && url.pathname.startsWith("/members/"))
+        return this.removeMember(decodeURIComponent(url.pathname.slice("/members/".length)));
+      if (key === "GET /events") return this.events(Number(url.searchParams.get("after") ?? "0"));
+      if (key === "GET /meta") return Response.json((await this.ctx.storage.get<ConvMeta>("meta")) ?? null);
+      return new Response("not found", { status: 404 });
     } catch (err) {
       if (err instanceof ZodError) return Response.json({ error: err.issues }, { status: 400 });
       throw err;
     }
   }
 
-  private async init(body: { machineId: string; machineName: string; dir: string }): Promise<Response> {
-    const meta: ConvMeta = {
-      machineId: body.machineId,
-      machineName: body.machineName,
-      dir: body.dir,
-      state: "thinking",
-    };
-    await this.ctx.storage.put("meta", meta);
-    return Response.json(meta);
+  // 幂等：1:1 会话双方任一发起都会命中同一个 DO，已初始化则只补成员、不覆盖。
+  private async init(body: {
+    kind: "direct" | "group";
+    title?: string;
+    createdBy: string;
+    members: Member[];
+  }): Promise<Response> {
+    const existing = await this.ctx.storage.get<ConvMeta>("meta");
+    if (!existing) {
+      const meta: ConvMeta = { kind: body.kind, title: body.title ?? "", createdBy: body.createdBy };
+      await this.ctx.storage.put("meta", meta);
+    }
+    const now = nowSec();
+    for (const m of body.members ?? []) {
+      this.sql.exec(
+        "INSERT OR IGNORE INTO members (user_id, username, joined_at) VALUES (?, ?, ?)",
+        m.userId,
+        m.username,
+        now
+      );
+    }
+    return Response.json((await this.ctx.storage.get<ConvMeta>("meta")) ?? null);
   }
 
-  private async ingest(body: { event: unknown }): Promise<Response> {
-    // 注意：解析 + seq 计算 + 落库必须在第一个 await 之前同步跑完——
-    // 一旦在这之前插入 await，多条并发到达的 daemon 事件（同一个 conv）就可能在这里交错，
-    // seq 分配顺序不再保证跟到达顺序一致（曾实测触发：running/done 两条 status 乱序落到 UserDO）。
+  private async ingest(body: { event: unknown; senderUsername?: string }): Promise<Response> {
+    // seq 分配 + 落库必须在首个 await 之前同步完成，避免并发消息 seq 与到达顺序错位。
     const draft = EventDraftLoose.parse(body.event);
     const row = [...this.sql.exec("SELECT COALESCE(MAX(seq), 0) AS m FROM events")][0];
     const seq = (row.m as number) + 1;
     const event = { ...draft, seq } as EventLoose;
+    // 服务端盖 author（防伪造）：文本消息用发送者已认证的 username 覆盖客户端自报值。
+    if (event.type === "text" && body.senderUsername && event.body && typeof event.body === "object") {
+      (event.body as Record<string, unknown>).author = body.senderUsername;
+    }
     this.sql.exec("INSERT INTO events (seq, id, json) VALUES (?, ?, ?)", seq, event.id, JSON.stringify(event));
 
-    const meta = await this.ctx.storage.get<ConvMeta>("meta");
-    if (!meta) return Response.json({ error: "conversation not initialized" }, { status: 409 });
-
-    if (event.type === "status") {
-      const s = StatusBody.safeParse(event.body);
-      if (s.success) {
-        meta.state = s.data.state;
-        await this.ctx.storage.put("meta", meta);
-      }
-    }
-
-    const notify: NotifyBody = {
+    await this.fanout({
       conv: event.conv,
       event,
-      meta,
-      summary: {
-        state: meta.state,
-        lastMessage: lastMessageOf(event),
-        lastSeq: seq,
-        updatedAt: event.ts,
-      },
-    };
-    await this.user().fetch("https://do/notify", { method: "POST", body: JSON.stringify(notify) });
+      summary: { lastMessage: lastMessageOf(event), lastSeq: seq, updatedAt: event.ts },
+    });
     return Response.json(event);
   }
 
@@ -113,19 +114,35 @@ export class ConversationDO extends DurableObject<Env> {
     if (event.type !== "text") return new Response("not a text event", { status: 400 });
     event.body.markdown = body.markdown;
     this.sql.exec("UPDATE events SET json = ? WHERE id = ?", JSON.stringify(event), body.eventId);
-    await this.user().fetch("https://do/notify-patch", {
-      method: "POST",
-      body: JSON.stringify({ conv: body.conv, eventId: body.eventId, markdown: body.markdown }),
-    });
+    for (const m of this.members()) {
+      await this.user(m.user_id as string).fetch("https://do/notify-patch", {
+        method: "POST",
+        body: JSON.stringify({ conv: body.conv, eventId: body.eventId, markdown: body.markdown }),
+      });
+    }
     return Response.json({ ok: true });
   }
 
-  private async session(body: { agentSessionId: string }): Promise<Response> {
-    const meta = await this.ctx.storage.get<ConvMeta>("meta");
-    if (!meta) return new Response("no meta", { status: 404 });
-    meta.agentSessionId = body.agentSessionId;
-    await this.ctx.storage.put("meta", meta);
+  private async addMember(body: Member): Promise<Response> {
+    const before = [...this.sql.exec("SELECT 1 FROM members WHERE user_id = ?", body.userId)][0];
+    this.sql.exec(
+      "INSERT OR IGNORE INTO members (user_id, username, joined_at) VALUES (?, ?, ?)",
+      body.userId,
+      body.username,
+      nowSec()
+    );
+    return Response.json({ ok: true, added: !before });
+  }
+
+  private removeMember(userId: string): Response {
+    this.sql.exec("DELETE FROM members WHERE user_id = ?", userId);
     return Response.json({ ok: true });
+  }
+
+  private listMembers(): Response {
+    return Response.json(
+      this.members().map((m) => ({ userId: m.user_id, username: m.username }))
+    );
   }
 
   private events(after: number): Response {
@@ -133,18 +150,32 @@ export class ConversationDO extends DurableObject<Env> {
     return Response.json(rows.map((r) => JSON.parse(r.json as string)));
   }
 
-  private user(): DurableObjectStub {
-    return this.env.USER.get(this.env.USER.idFromName("user"));
+  private async fanout(notify: NotifyBody): Promise<void> {
+    for (const m of this.members()) {
+      await this.user(m.user_id as string).fetch("https://do/notify", {
+        method: "POST",
+        body: JSON.stringify(notify),
+      });
+    }
+  }
+
+  private members(): Record<string, unknown>[] {
+    return [...this.sql.exec("SELECT user_id, username FROM members")];
+  }
+
+  private user(userId: string): DurableObjectStub {
+    return this.env.USER.get(this.env.USER.idFromName(userId));
   }
 }
 
 function lastMessageOf(e: EventLoose): string | null {
   const b = e.body as Record<string, unknown> | undefined;
   if (e.type === "text" && typeof b?.markdown === "string") return b.markdown.slice(0, 120);
-  if (e.type === "tool_card" && typeof b?.title === "string") return b.title.slice(0, 120);
-  if (e.type === "permission_request" && typeof b?.description === "string")
-    return `需要批准：${b.description}`.slice(0, 120);
-  // status 事件只是状态变化，不是一条新正文：不覆盖会话列表里上一条的 lastMessage
-  if (e.type === "status") return null;
+  if (e.type === "system" && typeof b?.text === "string") return b.text.slice(0, 120);
+  if (e.type === "status") return null; // 状态变化不覆盖会话列表上一条正文
   return `[${e.type}]`;
+}
+
+function nowSec(): number {
+  return Math.floor(Date.now() / 1000);
 }

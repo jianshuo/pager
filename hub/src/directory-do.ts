@@ -39,6 +39,8 @@ export class DirectoryDO extends DurableObject<Env> {
         return this.logout(await req.json());
       case "GET /search":
         return this.search(url.searchParams.get("q") ?? "");
+      case "POST /names":
+        return this.names(await req.json());
       default:
         return new Response("not found", { status: 404 });
     }
@@ -92,6 +94,17 @@ export class DirectoryDO extends DurableObject<Env> {
       ...this.sql.exec("SELECT user_id, username FROM users WHERE username LIKE ? || '%' ORDER BY username LIMIT 20", prefix),
     ];
     return Response.json(rows.map((r) => ({ userId: r.user_id, username: r.username })));
+  }
+
+  // 批量 userId → {userId, username}，Worker 建群/建直连时补成员名用。未知 id 跳过。
+  private names(body: { userIds: string[] }): Response {
+    const ids = Array.isArray(body.userIds) ? body.userIds : [];
+    const out: { userId: string; username: string }[] = [];
+    for (const id of ids) {
+      const row = [...this.sql.exec("SELECT username FROM users WHERE user_id = ?", id)][0];
+      if (row) out.push({ userId: id, username: row.username as string });
+    }
+    return Response.json(out);
   }
 
   private mintSession(userId: string): string {

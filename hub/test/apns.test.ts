@@ -85,34 +85,21 @@ describe("sendApns", () => {
   });
 });
 
-describe("pushPlanFor", () => {
-  const base = { id: "evt_1", conv: "cnv_1", seq: 1, ts: 1, role: "agent", agent: "claude-code" } as const;
-  const meta = { machineName: "Mac" };
+describe("pushPlanFor（Mesh：只推真人文本消息）", () => {
+  const base = { id: "evt_1", conv: "cnv_1", seq: 1, ts: 1, role: "user", agent: "claude-code" } as const;
 
-  it("permission_request → 高优先级 + category + request_id", () => {
-    const plan = pushPlanFor(
-      { ...base, type: "permission_request", body: { request_id: "r1", tool: "Bash", description: "跑 rm", options: ["allow", "deny"] } } as any,
-      meta
-    );
-    expect(plan).toEqual({
-      title: "需要批准 · Mac",
-      body: "跑 rm",
-      priority: 10,
-      category: "PERMISSION_REQUEST",
-      request_id: "r1",
-    });
+  it("text → 高优先级，title 为传入名、body 为正文", () => {
+    const plan = pushPlanFor({ ...base, type: "text", body: { markdown: "你好呀" } } as any, { title: "小林" });
+    expect(plan).toEqual({ title: "小林", body: "你好呀", priority: 10 });
   });
 
-  it("status done/failed/waiting_input 推，running/thinking 不推", () => {
-    expect(pushPlanFor({ ...base, type: "status", body: { state: "done" } } as any, meta)?.priority).toBe(5);
-    expect(pushPlanFor({ ...base, type: "status", body: { state: "failed", note: "编译错" } } as any, meta)?.body).toBe("编译错");
-    expect(pushPlanFor({ ...base, type: "status", body: { state: "waiting_input" } } as any, meta)).not.toBeNull();
-    expect(pushPlanFor({ ...base, type: "status", body: { state: "running" } } as any, meta)).toBeNull();
-    expect(pushPlanFor({ ...base, type: "status", body: { state: "thinking" } } as any, meta)).toBeNull();
+  it("title 空时回退「新消息」", () => {
+    expect(pushPlanFor({ ...base, type: "text", body: { markdown: "hi" } } as any, { title: "" })?.title).toBe("新消息");
   });
 
-  it("text/tool_card/未知类型不推", () => {
-    expect(pushPlanFor({ ...base, type: "text", body: { markdown: "x" } } as any, meta)).toBeNull();
-    expect(pushPlanFor({ ...base, type: "voice_note", body: {} } as any, meta)).toBeNull();
+  it("system/status/未知类型不推", () => {
+    expect(pushPlanFor({ ...base, type: "system", body: { text: "进群" } } as any, { title: "群" })).toBeNull();
+    expect(pushPlanFor({ ...base, type: "status", body: { state: "done" } } as any, { title: "x" })).toBeNull();
+    expect(pushPlanFor({ ...base, type: "voice_note", body: {} } as any, { title: "x" })).toBeNull();
   });
 });
