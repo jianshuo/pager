@@ -2,6 +2,7 @@ import type { Env } from "./env.js";
 import { ConversationDO } from "./conversation-do.js";
 import { MachineDO } from "./machine-do.js";
 import { UserDO } from "./user-do.js";
+import { DirectoryDO } from "./directory-do.js";
 import {
   NewConversationRequest,
   NewConversationResponse,
@@ -12,7 +13,7 @@ import {
 } from "@pager/protocol";
 import { ZodError } from "zod";
 
-export { ConversationDO, MachineDO, UserDO };
+export { ConversationDO, MachineDO, UserDO, DirectoryDO };
 
 function bearer(req: Request): string | null {
   const h = req.headers.get("Authorization") ?? "";
