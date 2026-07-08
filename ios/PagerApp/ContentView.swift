@@ -14,7 +14,28 @@ struct ContentView: View {
             }
         }
         .tint(Theme.brandGreen)
+        .task {
+            #if DEBUG
+            // 模拟器活体演示：simctl launch 时用 SIMCTL_CHILD_MESH_DEBUG_* 注入一个已注册账号的
+            // session，直接进主界面（免手打）。生产/无变量即空操作。
+            await debugAutoLoginIfRequested()
+            #endif
+        }
     }
+
+    #if DEBUG
+    private func debugAutoLoginIfRequested() async {
+        guard !model.isLoggedIn else { return }
+        let env = ProcessInfo.processInfo.environment
+        guard let token = env["MESH_DEBUG_TOKEN"], !token.isEmpty,
+              let userId = env["MESH_DEBUG_USERID"],
+              let username = env["MESH_DEBUG_USERNAME"] else { return }
+        Keychain.sessionToken = token
+        Keychain.userId = userId
+        Keychain.username = username
+        await model.adoptDebugSession()
+    }
+    #endif
 }
 
 #Preview {

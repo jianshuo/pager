@@ -70,6 +70,17 @@ final class AppModel {
         isLoggedIn = false
     }
 
+    #if DEBUG
+    /// Adopts a session already written into the Keychain (simulator demo auto-login): flips the
+    /// gate, opens the socket, and pulls the lists.
+    func adoptDebugSession() async {
+        isLoggedIn = true
+        connect()
+        await refreshFriends()
+        await refreshConversations()
+    }
+    #endif
+
     // MARK: - Ingest (WS)
 
     func ingest(_ message: ServerMessage) {

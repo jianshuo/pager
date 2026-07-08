@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1024px; height: 1024px; }
+  /* 7A「无焦点·网即主角」——抹茶渐变 + 不对称白网，无发光焦点。App 图标满幅，圆角由 iOS 蒙版。 */
+  .icon {
+    position: relative;
+    width: 1024px; height: 1024px;
+    background:
+      radial-gradient(at 25% 22%, #b7cd8a, transparent 55%),
+      radial-gradient(at 82% 15%, #9db86f, transparent 50%),
+      radial-gradient(at 85% 85%, #e0a05a, transparent 52%),
+      radial-gradient(at 12% 90%, #5f7d3a, transparent 55%),
+      #86a15c;
+    overflow: hidden;
+  }
+  /* 左上柔光，给大尺寸加一点体积感（去高光焦点，只留环境光） */
+  .hl {
+    position: absolute; top: 109px; left: 123px; width: 396px; height: 396px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,.40), transparent 68%);
+  }
+  svg { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+  <div class="icon">
+    <div class="hl"></div>
+    <svg width="1024" height="1024" viewBox="0 0 120 120">
+      <g stroke="#fffef9" stroke-width="2.6" stroke-linecap="round" opacity=".62">
+        <line x1="40" y1="34" x2="78" y2="28"/>
+        <line x1="78" y1="28" x2="92" y2="58"/>
+        <line x1="92" y1="58" x2="70" y2="86"/>
+        <line x1="70" y1="86" x2="34" y2="76"/>
+        <line x1="34" y1="76" x2="40" y2="34"/>
+        <line x1="40" y1="34" x2="54" y2="56"/>
+        <line x1="78" y1="28" x2="54" y2="56"/>
+        <line x1="70" y1="86" x2="54" y2="56"/>
+        <line x1="34" y1="76" x2="54" y2="56"/>
+      </g>
+      <g fill="#fffef9">
+        <circle cx="40" cy="34" r="4.5"/>
+        <circle cx="78" cy="28" r="4.5"/>
+        <circle cx="92" cy="58" r="4.5"/>
+        <circle cx="70" cy="86" r="4.5"/>
+        <circle cx="34" cy="76" r="4.5"/>
+        <circle cx="54" cy="56" r="4.5"/>
+      </g>
+    </svg>
+  </div>
+</body>
+</html>
