@@ -41,6 +41,8 @@ export class DirectoryDO extends DurableObject<Env> {
         return this.search(url.searchParams.get("q") ?? "");
       case "POST /names":
         return this.names(await req.json());
+      case "POST /admin-delete-user":
+        return this.adminDeleteUser(await req.json());
       default:
         return new Response("not found", { status: 404 });
     }
@@ -105,6 +107,16 @@ export class DirectoryDO extends DurableObject<Env> {
       if (row) out.push({ userId: id, username: row.username as string });
     }
     return Response.json(out);
+  }
+
+  // 运维：按用户名删账号（释放用户名）。删 users + 其 sessions；旧 UserDO 实例作废不再被引用。
+  private adminDeleteUser(body: { username: string }): Response {
+    const username = (body.username ?? "").trim().toLowerCase();
+    const row = [...this.sql.exec("SELECT user_id FROM users WHERE username = ?", username)][0];
+    if (!row) return Response.json({ ok: true, deleted: false });
+    this.sql.exec("DELETE FROM sessions WHERE user_id = ?", row.user_id);
+    this.sql.exec("DELETE FROM users WHERE username = ?", username);
+    return Response.json({ ok: true, deleted: true, userId: row.user_id });
   }
 
   private mintSession(userId: string): string {

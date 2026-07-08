@@ -84,6 +84,16 @@ export default {
       throw err;
     }
 
+    // 运维：按用户名删账号，用工作区密钥 CLIENT_TOKEN 保护（非 session）。释放被占用的用户名。
+    if (path.startsWith("/api/admin/users/") && req.method === "DELETE") {
+      if (!token || token !== env.CLIENT_TOKEN) return new Response("unauthorized", { status: 401 });
+      const username = decodeURIComponent(path.slice("/api/admin/users/".length));
+      return directory(env).fetch("https://do/admin-delete-user", {
+        method: "POST",
+        body: JSON.stringify({ username }),
+      });
+    }
+
     // 其余全部需要有效 session
     const me = await resolveSession(env, token);
     if (!me) return new Response("unauthorized", { status: 401 });
