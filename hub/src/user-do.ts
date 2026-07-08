@@ -10,6 +10,12 @@ export class UserDO extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // 自愈：Pager→Mesh 部署滚动窗口内，个别 UserDO 实例的派生表可能被旧 Pager 代码以旧 schema 建过
+    // （conversations 带 NOT NULL 的 machineId，devices 带 updatedAt）。这些是可重建的索引，检测到旧
+    // schema 就整表 DROP 重建，避免旧列的 NOT NULL 约束挡住 Mesh 写入。全新实例不受影响。
+    this.dropIfLegacy("conversations", "machineId");
+    this.dropIfLegacy("devices", "updatedAt");
+
     this.sql.exec(
       `CREATE TABLE IF NOT EXISTS friends (
         friend_user_id TEXT PRIMARY KEY,
@@ -35,6 +41,15 @@ export class UserDO extends DurableObject<Env> {
         updated_at INTEGER NOT NULL
       )`
     );
+  }
+
+  private dropIfLegacy(table: string, legacyCol: string): void {
+    try {
+      const cols = [...this.sql.exec(`PRAGMA table_info(${table})`)].map((r) => r.name as string);
+      if (cols.includes(legacyCol)) this.sql.exec(`DROP TABLE ${table}`);
+    } catch {
+      /* 表不存在或 PRAGMA 失败：无需处理，下面的 CREATE 会建新表 */
+    }
   }
 
   async fetch(req: Request): Promise<Response> {
