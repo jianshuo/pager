@@ -25,11 +25,12 @@ struct ContentView: View {
 
     #if DEBUG
     private func debugAutoLoginIfRequested() async {
-        guard !model.isLoggedIn else { return }
         let env = ProcessInfo.processInfo.environment
         guard let token = env["MESH_DEBUG_TOKEN"], !token.isEmpty,
               let userId = env["MESH_DEBUG_USERID"],
               let username = env["MESH_DEBUG_USERNAME"] else { return }
+        // 强制覆盖已存的会话（demo 里切换账号用）——不 guard isLoggedIn，否则会沿用旧 token。
+        guard token != Keychain.sessionToken || !model.isLoggedIn else { return }
         Keychain.sessionToken = token
         Keychain.userId = userId
         Keychain.username = username
