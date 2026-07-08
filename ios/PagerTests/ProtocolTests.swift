@@ -114,15 +114,23 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(markdown, "updated text")
     }
 
-    func testServerMessageDecodesMachineStatusKind() throws {
-        let json = #"{"kind":"machine_status","machine":{"id":"mch_1","name":"MacBook"},"online":true}"#
-        let msg = try JSONDecoder().decode(ServerMessage.self, from: Data(json.utf8))
-        guard case .machineStatus(let machine, let online) = msg else {
-            return XCTFail("expected .machineStatus, got \(msg)")
-        }
-        XCTAssertEqual(machine.id, "mch_1")
-        XCTAssertEqual(machine.name, "MacBook")
-        XCTAssertTrue(online)
+    func testSystemEventDecodesText() throws {
+        let json = #"{"id":"evt_s","conv":"cnv_1","seq":1,"ts":1751780000,"role":"system","agent":"claude-code","type":"system","body":{"text":"小林 进群"}}"#
+        let e = try decodeEvent(json)
+        guard case .system(let text) = e.body else { return XCTFail("expected .system, got \(e.body)") }
+        XCTAssertEqual(text, "小林 进群")
+    }
+
+    func testConversationSummaryDecodesDirectAndGroup() throws {
+        let direct = #"{"id":"dm_a_b","kind":"direct","title":"","peerUserId":"usr_b","peerUsername":"xiaolin","lastMessage":"hi","lastSeq":3,"updatedAt":1}"#
+        let dc = try JSONDecoder().decode(ConversationSummary.self, from: Data(direct.utf8))
+        XCTAssertFalse(dc.isGroup)
+        XCTAssertEqual(dc.displayName, "xiaolin")
+
+        let group = #"{"id":"cnv_x","kind":"group","title":"家人群","peerUserId":"","peerUsername":"","lastMessage":"","lastSeq":0,"updatedAt":0}"#
+        let gc = try JSONDecoder().decode(ConversationSummary.self, from: Data(group.utf8))
+        XCTAssertTrue(gc.isGroup)
+        XCTAssertEqual(gc.displayName, "家人群")
     }
 
     func testClientMessageSubscribeEncodesKindAndAfterSeq() throws {

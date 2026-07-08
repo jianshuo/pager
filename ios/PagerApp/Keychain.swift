@@ -1,67 +1,50 @@
 import Foundation
 import Security
 
-/// Stores the Pager client token in the iOS Keychain (service "dev.pager", account "clientToken"),
-/// and the hub base URL in UserDefaults (not secret, just a config value).
+/// Stores the Mesh session credentials: the session token (Keychain), plus the logged-in
+/// userId/username and hub URL (UserDefaults — not secret). Cleared on logout.
 enum Keychain {
     static let defaultHubURL = "https://pager-hub.jianshuo.workers.dev"
 
-    private static let service = "dev.pager"
-    private static let tokenAccount = "clientToken"
-    private static let userTokenAccount = "userToken"
-    private static let hubURLDefaultsKey = "dev.pager.hubURL"
-    private static let displayNameDefaultsKey = "dev.pager.displayName"
+    private static let service = "dev.mesh"
+    private static let sessionAccount = "sessionToken"
+    private static let hubURLKey = "dev.mesh.hubURL"
+    private static let userIdKey = "dev.mesh.userId"
+    private static let usernameKey = "dev.mesh.username"
 
-    /// The workspace-level token (legacy identity, author self-declared). Used only for
-    /// `HubAPI.registerUser` and as a fallback when no personal token has been registered yet.
-    static var token: String? {
-        get { readString(account: tokenAccount) }
+    /// The session token (starts "stk_"), issued by POST /api/register|login. nil = logged out.
+    /// Used as the Bearer on every REST/WS call.
+    static var sessionToken: String? {
+        get { readString(account: sessionAccount) }
         set {
-            if let newValue, !newValue.isEmpty {
-                writeString(newValue, account: tokenAccount)
-            } else {
-                delete(account: tokenAccount)
-            }
+            if let newValue, !newValue.isEmpty { writeString(newValue, account: sessionAccount) }
+            else { delete(account: sessionAccount) }
         }
     }
 
-    /// The person's personal token (starts "utk_"), returned by `POST /api/users` and stored
-    /// after `AppModel.ensureRegistered()` runs. Nil until registered. The hub stamps every
-    /// message's `author` with the authenticated name for this token (ignoring any
-    /// self-declared author in the request body).
-    static var userToken: String? {
-        get { readString(account: userTokenAccount) }
-        set {
-            if let newValue, !newValue.isEmpty {
-                writeString(newValue, account: userTokenAccount)
-            } else {
-                delete(account: userTokenAccount)
-            }
-        }
+    static var userId: String {
+        get { UserDefaults.standard.string(forKey: userIdKey) ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: userIdKey) }
     }
 
-    /// Single source of truth for the Bearer token used on every REST/WS call except
-    /// registration itself: the personal token once registered, else the workspace token.
-    static var authToken: String? {
-        userToken ?? token
+    static var username: String {
+        get { UserDefaults.standard.string(forKey: usernameKey) ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: usernameKey) }
     }
 
     static var hubURL: String {
-        get { UserDefaults.standard.string(forKey: hubURLDefaultsKey) ?? defaultHubURL }
-        set { UserDefaults.standard.set(newValue, forKey: hubURLDefaultsKey) }
+        get { UserDefaults.standard.string(forKey: hubURLKey) ?? defaultHubURL }
+        set { UserDefaults.standard.set(newValue, forKey: hubURLKey) }
     }
 
-    /// The user's display name, attached to every human message they send (`body.author`) so
-    /// peers in a room can tell who's talking. Not secret — stored in UserDefaults. Defaults to "我".
-    static var displayName: String {
-        get {
-            let stored = UserDefaults.standard.string(forKey: displayNameDefaultsKey) ?? ""
-            return stored.isEmpty ? "我" : stored
-        }
-        set {
-            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            UserDefaults.standard.set(trimmed, forKey: displayNameDefaultsKey)
-        }
+    /// True once logged in. Drives the auth gate in `ContentView`.
+    static var isLoggedIn: Bool { !(sessionToken ?? "").isEmpty }
+
+    /// Wipe all session state (logout).
+    static func clearSession() {
+        sessionToken = nil
+        userId = ""
+        username = ""
     }
 
     // MARK: - SecItem plumbing

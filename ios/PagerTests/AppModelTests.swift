@@ -84,17 +84,14 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.events(for: "cnv_b").map { $0.id }, ["evt_b1"])
     }
 
-    func testMachineStatusUpdatesOnlineFlag() throws {
+    func testSystemEventIngestsAsSystemBody() throws {
         let model = AppModel(api: HubAPI(), ws: ClientWS())
-        let json = #"{"kind":"machine_status","machine":{"id":"mch_1","name":"MacBook"},"online":true}"#
+        let json = #"{"kind":"event","event":{"id":"evt_s","conv":"cnv_1","seq":1,"ts":1751780000,"role":"system","agent":"claude-code","type":"system","body":{"text":"小林 进群"}}}"#
         model.ingest(try decodeServerMessage(json))
-
-        XCTAssertEqual(model.machines["mch_1"]?.name, "MacBook")
-        XCTAssertEqual(model.machines["mch_1"]?.online, true)
-
-        let offlineJSON = #"{"kind":"machine_status","machine":{"id":"mch_1","name":"MacBook"},"online":false}"#
-        model.ingest(try decodeServerMessage(offlineJSON))
-        XCTAssertEqual(model.machines["mch_1"]?.online, false)
+        guard case .system(let text) = model.events(for: "cnv_1").first?.body else {
+            return XCTFail("expected .system")
+        }
+        XCTAssertEqual(text, "小林 进群")
     }
 
     func testPatchBeforeEventIsBufferedThenSelfHealsOnArrival() throws {
