@@ -87,7 +87,17 @@ export class ConversationDO extends DurableObject<Env> {
     return Response.json((await this.ctx.storage.get<ConvMeta>("meta")) ?? null);
   }
 
-  private async ingest(body: { event: unknown; senderUsername?: string }): Promise<Response> {
+  private async ingest(body: {
+    event: unknown;
+    senderUsername?: string;
+    senderUserId?: string;
+  }): Promise<Response> {
+    // 成员校验：带 senderUserId 的消息（来自客户端 WS）必须是本会话成员，防非成员注入。
+    // 不带 senderUserId 的（Worker 直接注入的 system 事件）跳过校验。
+    if (body.senderUserId) {
+      const member = [...this.sql.exec("SELECT 1 FROM members WHERE user_id = ?", body.senderUserId)][0];
+      if (!member) return new Response("not a member", { status: 403 });
+    }
     // seq 分配 + 落库必须在首个 await 之前同步完成，避免并发消息 seq 与到达顺序错位。
     const draft = EventDraftLoose.parse(body.event);
     const row = [...this.sql.exec("SELECT COALESCE(MAX(seq), 0) AS m FROM events")][0];

@@ -92,6 +92,11 @@ export class UserDO extends DurableObject<Env> {
       );
       return Response.json({ ok: true });
     }
+    if (req.method === "DELETE" && url.pathname.startsWith("/conversations/")) {
+      const id = decodeURIComponent(url.pathname.slice("/conversations/".length));
+      this.sql.exec("DELETE FROM conversations WHERE id = ?", id);
+      return Response.json({ ok: true });
+    }
     if (key === "GET /conversations") {
       const rows = [...this.sql.exec("SELECT * FROM conversations ORDER BY last_ts DESC")];
       return Response.json(
@@ -203,7 +208,7 @@ export class UserDO extends DurableObject<Env> {
       const att = ws.deserializeAttachment() as { userId?: string; username?: string } | null;
       await this.conv(msg.conv).fetch("https://do/ingest", {
         method: "POST",
-        body: JSON.stringify({ event: msg.event, senderUsername: att?.username }),
+        body: JSON.stringify({ event: msg.event, senderUsername: att?.username, senderUserId: att?.userId }),
       });
     }
   }
