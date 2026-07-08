@@ -47,6 +47,10 @@ export const StatusBody = z.object({
 });
 export type StatusBody = z.infer<typeof StatusBody>;
 
+// 系统事件：进群/退群等中性提示，由服务端在成员变化时广播进会话时间线
+export const SystemBody = z.object({ text: z.string() });
+export type SystemBody = z.infer<typeof SystemBody>;
+
 export const ErrorBody = z.object({
   message: z.string(),
   recoverable: z.boolean(),
@@ -56,7 +60,8 @@ export type ErrorBody = z.infer<typeof ErrorBody>;
 // seq 由 ConversationDO 分配：上行用 EventDraft（无 seq），落库/下行用 Event
 const base = {
   id: z.string().startsWith("evt_"),
-  conv: z.string().startsWith("cnv_"),
+  // Mesh 会话 id 有两种：群 `cnv_…`、1:1 直连 `dm_<a>_<b>`（确定性）。放宽为非空字符串。
+  conv: z.string().min(1),
   seq: z.number().int().nonnegative(),
   ts: z.number().int().positive(), // epoch 秒
   role: Role,
@@ -73,6 +78,7 @@ const draftVariant = <T extends string, B extends z.ZodTypeAny>(type: T, body: B
 
 export const Event = z.discriminatedUnion("type", [
   variant("text", TextBody),
+  variant("system", SystemBody),
   variant("tool_card", ToolCardBody),
   variant("permission_request", PermissionRequestBody),
   variant("permission_response", PermissionResponseBody),
@@ -83,6 +89,7 @@ export type Event = z.infer<typeof Event>;
 
 export const EventDraft = z.discriminatedUnion("type", [
   draftVariant("text", TextBody),
+  draftVariant("system", SystemBody),
   draftVariant("tool_card", ToolCardBody),
   draftVariant("permission_request", PermissionRequestBody),
   draftVariant("permission_response", PermissionResponseBody),
