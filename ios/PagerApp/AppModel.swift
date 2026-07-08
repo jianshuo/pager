@@ -104,6 +104,41 @@ final class AppModel {
             applyPatch(conv: event.conv, eventId: event.id, markdown: markdown)
             pendingPatches[event.conv]?.removeValue(forKey: event.id)
         }
+
+        reflectInList(event)
+    }
+
+    /// Keeps the home conversation list live as events stream in: a brand-new conversation (a group
+    /// you were just pulled into, a first DM) triggers a list pull; an existing one updates its
+    /// last-message preview + timestamp in place and re-sorts. Without this the list only refreshed
+    /// on launch / pull-to-refresh, so a new group looked like "nothing showed up" to the invitee.
+    private func reflectInList(_ event: Event) {
+        let preview: String?
+        switch event.body {
+        case .text(let markdown, _): preview = markdown
+        case .system(let text): preview = text
+        default: preview = nil
+        }
+        if let idx = conversations.firstIndex(where: { $0.id == event.conv }) {
+            let c = conversations[idx]
+            conversations[idx] = ConversationSummary(
+                id: c.id, kind: c.kind, title: c.title, peerUserId: c.peerUserId,
+                peerUsername: c.peerUsername, lastMessage: preview ?? c.lastMessage,
+                lastSeq: max(c.lastSeq, event.seq), updatedAt: max(c.updatedAt, event.ts))
+            conversations.sort { $0.updatedAt > $1.updatedAt }
+        } else {
+            refreshListIfNewConv(event.conv)
+        }
+    }
+
+    private var refreshingList = false
+    private func refreshListIfNewConv(_ conv: String) {
+        guard !refreshingList else { return }
+        refreshingList = true
+        Task {
+            await refreshConversations()
+            refreshingList = false
+        }
     }
 
     private func applyPatch(conv: String, eventId: String, markdown: String) {
