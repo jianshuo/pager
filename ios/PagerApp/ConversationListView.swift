@@ -52,6 +52,14 @@ struct ConversationListView: View {
                 .task {
                     model.connect()
                     await refresh()
+                    #if DEBUG
+                    // 模拟器活体演示：MESH_DEBUG_OPEN_CONV 指定的会话在刷新后自动打开。
+                    if let cid = ProcessInfo.processInfo.environment["MESH_DEBUG_OPEN_CONV"],
+                       !cid.isEmpty, path.isEmpty {
+                        let title = model.conversations.first { $0.id == cid }?.displayName ?? "对话"
+                        path.append(.conversation(id: cid, title: title))
+                    }
+                    #endif
                 }
                 .onChange(of: model.deepLinkConv) { _, newValue in
                     guard let convId = newValue, !convId.isEmpty else { return }
