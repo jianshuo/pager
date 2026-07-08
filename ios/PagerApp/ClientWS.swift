@@ -65,7 +65,7 @@ final class ClientWS: WSClient {
     init(
         session: URLSession = .shared,
         baseURLProvider: @escaping () -> String = { Keychain.hubURL },
-        tokenProvider: @escaping () -> String? = { Keychain.authToken }
+        tokenProvider: @escaping () -> String? = { Keychain.sessionToken }
     ) {
         self.session = session
         self.baseURLProvider = baseURLProvider
@@ -74,7 +74,7 @@ final class ClientWS: WSClient {
 
     /// Opens the socket (no-op if already connected/connecting). Call on foreground.
     /// No-ops silently if there's no token configured yet or the hub URL is malformed —
-    /// the app is expected to gate this behind `Keychain.authToken != nil` at the call site.
+    /// the app is expected to gate this behind `Keychain.sessionToken != nil` at the call site.
     func connect() {
         guard webSocketTask == nil else { return }
         guard let token = tokenProvider(), !token.isEmpty else { return }

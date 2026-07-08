@@ -121,17 +121,8 @@ export const HubPatch = z.object({
 });
 export type HubPatch = z.infer<typeof HubPatch>;
 
-// 机器上下线广播（多设备场景下客户端刷新在线态用）
-export const HubMachineStatus = z.object({
-  kind: z.literal("machine_status"),
-  machine: MachineInfo,
-  online: z.boolean(),
-});
-export type HubMachineStatus = z.infer<typeof HubMachineStatus>;
-
 export const HubToClient = z.discriminatedUnion("kind", [
   HubEvent,
   HubPatch,
-  HubMachineStatus,
 ]);
 export type HubToClient = z.infer<typeof HubToClient>;

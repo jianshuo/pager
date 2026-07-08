@@ -103,12 +103,9 @@ describe("HubToClient", () => {
     ).toBe("patch");
   });
 
-  it("解析 machine_status 广播", () => {
-    const msg = {
-      kind: "machine_status",
-      machine: { id: "mch_mac", name: "Mac" },
-      online: false,
-    };
-    expect(HubToClient.parse(msg).kind).toBe("machine_status");
+  it("不再接受 machine_status（已下线）", () => {
+    expect(() =>
+      HubToClient.parse({ kind: "machine_status", machine: { id: "mch_mac", name: "Mac" }, online: false })
+    ).toThrow();
   });
 });

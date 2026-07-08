@@ -1,25 +1,18 @@
 import SwiftUI
 
-/// The live event stream for one conversation: a scrolling transcript of `EventRow`s plus a
-/// composer at the bottom. Subscribes on appear, unsubscribes on disappear, auto-scrolls to the
-/// newest event, and answers permission requests inline.
+/// The live transcript for one conversation plus a composer. Subscribes on appear, unsubscribes
+/// on disappear, auto-scrolls to the newest event. For groups, a toolbar action adds members;
+/// an overflow menu leaves the group.
 struct ConversationView: View {
     let conv: String
-    /// Best-effort title bits (machine name + dir) captured at navigation time. The events
-    /// stream doesn't carry them, so we thread them through from the list.
-    var machineName: String? = nil
-    var dir: String? = nil
+    var title: String = "对话"
 
     @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
 
     @State private var draft = ""
+    @State private var showAddMember = false
     @FocusState private var composerFocused: Bool
-    /// Permission request_ids answered locally this session, mapped to the chosen option, so the
-    /// buttons flip to a resolved state immediately — before the broadcast echo arrives.
-    @State private var locallyAnswered: [String: String] = [:]
-
-    /// The AI mention token the hub detects in an AI-enabled room.
-    private let aiMention = "@百姓AI"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,8 +26,28 @@ struct ConversationView: View {
         .toolbarBackground(Theme.barBG, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .tint(Theme.brandGreen)
+        .toolbar {
+            if isGroup {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button { showAddMember = true } label: { Label("拉人进群", systemImage: "person.badge.plus") }
+                        Button(role: .destructive) { leave() } label: { Label("退出群聊", systemImage: "rectangle.portrait.and.arrow.right") }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .tint(Theme.iconGreen)
+                }
+            }
+        }
+        .sheet(isPresented: $showAddMember) {
+            AddMemberSheet(conv: conv)
+        }
         .onAppear { model.openConversation(conv) }
         .onDisappear { model.closeConversation(conv) }
+    }
+
+    private var isGroup: Bool {
+        model.conversations.first(where: { $0.id == conv })?.isGroup ?? false
     }
 
     // MARK: - Transcript
@@ -44,13 +57,7 @@ struct ConversationView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(events) { event in
-                        EventRow(
-                            event: event,
-                            isAnswered: isAnswered(event),
-                            answeredChoice: answeredChoice(event),
-                            onPermission: handlePermission
-                        )
-                        .id(event.id)
+                        EventRow(event: event).id(event.id)
                     }
                     Color.clear.frame(height: 1).id(bottomAnchor)
                 }
@@ -59,54 +66,19 @@ struct ConversationView: View {
             }
             .background(Theme.chatBG)
             .onChange(of: events.count) { _, _ in
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(bottomAnchor, anchor: .bottom)
-                }
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(bottomAnchor, anchor: .bottom) }
             }
-            .onAppear {
-                proxy.scrollTo(bottomAnchor, anchor: .bottom)
-            }
+            .onAppear { proxy.scrollTo(bottomAnchor, anchor: .bottom) }
         }
     }
 
     private let bottomAnchor = "conv-bottom"
-
     private var events: [Event] { model.events(for: conv) }
 
     // MARK: - Composer
 
-    /// Whether this conversation is an AI-enabled room (a room with a bound machine+dir). Only such
-    /// rooms show the "@AI" pill and honor an "@百姓AI" mention. Derived from the list summary.
-    private var isAIRoom: Bool {
-        model.conversations.first(where: { $0.id == conv })?.isAIRoom ?? false
-    }
-
     private var composer: some View {
         HStack(spacing: 8) {
-            Button {
-                // v2: 语音输入占位
-            } label: {
-                Image(systemName: "mic")
-                    .font(.system(size: 17))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            .disabled(true)
-
-            if isAIRoom {
-                Button(action: mentionAI) {
-                    Text("@AI")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.deepGreen)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Theme.statusPillBG)
-                        .clipShape(Capsule())
-                        .overlay(Capsule().strokeBorder(Theme.brandGreen.opacity(0.4), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("@百姓AI")
-            }
-
             TextField("", text: $draft, axis: .vertical)
                 .focused($composerFocused)
                 .textFieldStyle(.plain)
@@ -117,15 +89,10 @@ struct ConversationView: View {
                 .padding(.vertical, 9)
                 .background(Theme.cream)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Theme.creamBorder, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.creamBorder, lineWidth: 1))
                 .overlay(alignment: .leading) {
                     if draft.isEmpty {
-                        Text("发消息…")
-                            .foregroundStyle(Theme.textTertiary)
-                            .padding(.leading, 14)
-                            .allowsHitTesting(false)
+                        Text("发消息…").foregroundStyle(Theme.textTertiary).padding(.leading, 14).allowsHitTesting(false)
                     }
                 }
                 .onSubmit(send)
@@ -146,9 +113,7 @@ struct ConversationView: View {
         .background(Theme.barBG)
     }
 
-    private var trimmedDraft: String {
-        draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private func send() {
         let text = trimmedDraft
@@ -157,61 +122,50 @@ struct ConversationView: View {
         draft = ""
     }
 
-    /// Prepends the AI mention token (if not already present) and focuses the field so the user
-    /// can type the task. The hub detects "@百姓AI" in the sent text and dispatches the Claude task.
-    private func mentionAI() {
-        if !draft.contains(aiMention) {
-            draft = draft.isEmpty ? "\(aiMention) " : "\(aiMention) \(draft)"
+    private func leave() {
+        Task {
+            await model.leave(conv: conv)
+            dismiss()
         }
-        composerFocused = true
     }
+}
 
-    // MARK: - Permission handling
+/// Friend picker for adding a member to a group.
+private struct AddMemberSheet: View {
+    let conv: String
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
 
-    private func handlePermission(_ requestId: String, _ choice: String) {
-        locallyAnswered[requestId] = choice
-        Task { await model.permissionRespond(conv: conv, requestId: requestId, choice: choice) }
-    }
-
-    /// A permission request is answered if we answered it locally this session OR a
-    /// `permission_response` with the same request_id has arrived over the wire.
-    private func isAnswered(_ event: Event) -> Bool {
-        guard case .permissionRequest(let requestId, _, _, _) = event.body else { return false }
-        return answeredChoice(event) != nil || locallyAnswered[requestId] != nil
-    }
-
-    /// The choice ("allow"/"deny") that resolved this permission request, preferring the wire
-    /// echo, falling back to the local optimistic answer.
-    private func answeredChoice(_ event: Event) -> String? {
-        guard case .permissionRequest(let requestId, _, _, _) = event.body else { return nil }
-        for e in events {
-            if case .permissionResponse(let rid, let choice) = e.body, rid == requestId {
-                return choice
+    var body: some View {
+        NavigationStack {
+            List {
+                if model.friends.isEmpty {
+                    Text("你还没有好友。").foregroundStyle(Theme.textSecondary)
+                }
+                ForEach(model.friends) { friend in
+                    Button {
+                        Task {
+                            await model.addMember(conv: conv, userId: friend.userId)
+                            dismiss()
+                        }
+                    } label: {
+                        HStack(spacing: 11) {
+                            HumanAvatar(name: friend.username, size: 32)
+                            Text(friend.username).foregroundStyle(Theme.ink)
+                            Spacer()
+                            Image(systemName: "plus.circle").foregroundStyle(Theme.iconGreen)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Theme.chatBG.ignoresSafeArea())
+            .navigationTitle("拉人进群")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
+            .task { await model.refreshFriends() }
         }
-        return locallyAnswered[requestId]
-    }
-
-    // MARK: - Title
-
-    private var title: String {
-        if let summary = model.conversations.first(where: { $0.id == conv }) {
-            return titled(name: summary.machineName, dir: summary.dir)
-        }
-        if let machineName {
-            return titled(name: machineName, dir: dir ?? "")
-        }
-        return "对话"
-    }
-
-    /// A room has an empty dir — show just its title (no "· " suffix). A machine session shows
-    /// "<machine> · <lastPathComponent>".
-    private func titled(name: String, dir: String) -> String {
-        let short = shorten(dir)
-        return short.isEmpty ? name : "\(name) · \(short)"
-    }
-
-    private func shorten(_ path: String) -> String {
-        (path as NSString).lastPathComponent
     }
 }

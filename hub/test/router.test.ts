@@ -1,36 +1,122 @@
 import { SELF } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
+import { until } from "./util.js";
 
-describe("router", () => {
+async function api(path: string, opts: { token?: string; method?: string; body?: unknown } = {}) {
+  const headers: Record<string, string> = {};
+  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  if (opts.body !== undefined) headers["content-type"] = "application/json";
+  return SELF.fetch(`https://hub${path}`, {
+    method: opts.method ?? (opts.body !== undefined ? "POST" : "GET"),
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+}
+async function register(username: string) {
+  const r = await api("/api/register", { body: { username, password: "hunter2" } });
+  expect(r.status).toBe(200);
+  return r.json<{ userId: string; username: string; token: string }>();
+}
+async function clientWs(token: string) {
+  const res = await SELF.fetch("https://hub/ws/client", {
+    headers: { Upgrade: "websocket", Authorization: `Bearer ${token}` },
+  });
+  expect(res.status).toBe(101);
+  const ws = res.webSocket!;
+  ws.accept();
+  const got: any[] = [];
+  ws.addEventListener("message", (ev) => got.push(JSON.parse(ev.data as string)));
+  return { ws, got };
+}
+
+describe("router：账号与鉴权", () => {
   it("health 免认证", async () => {
-    const res = await SELF.fetch("https://hub/health");
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await (await api("/health")).json()).toEqual({ ok: true });
   });
 
   it("无 token 一律 401", async () => {
-    expect((await SELF.fetch("https://hub/api/conversations")).status).toBe(401);
+    expect((await api("/api/conversations")).status).toBe(401);
     expect((await SELF.fetch("https://hub/ws/client")).status).toBe(401);
   });
 
-  it("daemon token 错误 401", async () => {
-    const res = await SELF.fetch("https://hub/ws/daemon?machine=mch_x", {
-      headers: { Authorization: "Bearer wrong" },
-    });
-    expect(res.status).toBe(401);
+  it("注册发 token；错密码登录 401", async () => {
+    const { token, userId } = await register("r_alice");
+    expect(token.startsWith("stk_")).toBe(true);
+    expect(userId.startsWith("usr_")).toBe(true);
+    expect((await api("/api/login", { body: { username: "r_alice", password: "wrongpass" } })).status).toBe(401);
+    const me = await (await api("/api/me", { token })).json<any>();
+    expect(me.username).toBe("r_alice");
   });
+});
 
-  it("daemon 缺 machine 参数 400", async () => {
-    const res = await SELF.fetch("https://hub/ws/daemon", {
-      headers: { Authorization: "Bearer test-daemon-token" },
-    });
-    expect(res.status).toBe(400);
+describe("router：好友与 1:1", () => {
+  it("搜人→加好友→建直连→双方可见→互发送达", async () => {
+    const alice = await register("r_bob_a");
+    const bob = await register("r_bob_b");
+
+    // alice 搜 bob
+    const found = await (await api(`/api/users?q=r_bob_b`, { token: alice.token })).json<any[]>();
+    expect(found.find((u) => u.userId === bob.userId)).toBeTruthy();
+
+    // alice 加 bob 好友
+    await api("/api/friends", { token: alice.token, body: { userId: bob.userId } });
+    const friends = await (await api("/api/friends", { token: alice.token })).json<any[]>();
+    expect(friends.find((f) => f.userId === bob.userId)?.username).toBe("r_bob_b");
+
+    // 建直连
+    const dc = await (await api("/api/conversations/direct", { token: alice.token, body: { userId: bob.userId } })).json<any>();
+    expect(dc.id.startsWith("dm_")).toBe(true);
+
+    // 双方会话列表都含它
+    const aList = await (await api("/api/conversations", { token: alice.token })).json<any[]>();
+    const bList = await (await api("/api/conversations", { token: bob.token })).json<any[]>();
+    expect(aList.find((c) => c.id === dc.id)?.peerUsername).toBe("r_bob_b");
+    expect(bList.find((c) => c.id === dc.id)?.peerUsername).toBe("r_bob_a");
+
+    // bob 订阅，alice 发消息 → bob 收到，author 被服务端盖成 alice
+    const b = await clientWs(bob.token);
+    b.ws.send(JSON.stringify({ kind: "subscribe", conv: dc.id, afterSeq: 0 }));
+    const a = await clientWs(alice.token);
+    a.ws.send(
+      JSON.stringify({
+        kind: "send",
+        conv: dc.id,
+        event: { id: "evt_dm1", conv: dc.id, ts: 1751781000, role: "user", agent: "claude-code", type: "text", body: { markdown: "在吗", author: "假名" } },
+      })
+    );
+    const frame = await until(async () => b.got.find((g) => g.kind === "event" && g.event.id === "evt_dm1"));
+    expect(frame.event.body.markdown).toBe("在吗");
+    expect(frame.event.body.author).toBe("r_bob_a");
+    a.ws.close();
+    b.ws.close();
   });
+});
 
-  it("认证通过但未知路径 404", async () => {
-    const res = await SELF.fetch("https://hub/nope", {
-      headers: { Authorization: "Bearer test-client-token" },
-    });
-    expect(res.status).toBe(404);
+describe("router：群与拉人", () => {
+  it("建群→双方可见→拉第三人→三方可见 + 进群系统消息", async () => {
+    const a = await register("r_grp_a");
+    const b = await register("r_grp_b");
+    const c = await register("r_grp_c");
+
+    const g = await (await api("/api/groups", { token: a.token, body: { title: "家人群", members: [b.userId] } })).json<any>();
+    expect(g.id.startsWith("cnv_")).toBe(true);
+
+    let bList = await (await api("/api/conversations", { token: b.token })).json<any[]>();
+    expect(bList.find((x) => x.id === g.id)?.title).toBe("家人群");
+
+    // a 拉 c
+    const add = await api(`/api/conversations/${g.id}/members`, { token: a.token, body: { userId: c.userId } });
+    expect(add.status).toBe(200);
+    const cList = await (await api("/api/conversations", { token: c.token })).json<any[]>();
+    expect(cList.find((x) => x.id === g.id)?.title).toBe("家人群");
+
+    // c 订阅能看到「进群」系统消息在 backlog 里
+    const cw = await clientWs(c.token);
+    cw.ws.send(JSON.stringify({ kind: "subscribe", conv: g.id, afterSeq: 0 }));
+    const sys = await until(async () =>
+      cw.got.find((x) => x.kind === "event" && x.event.type === "system" && x.event.body.text.includes("进群"))
+    );
+    expect(sys.event.body.text).toContain("r_grp_c");
+    cw.ws.close();
   });
 });

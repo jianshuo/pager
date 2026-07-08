@@ -1,100 +1,98 @@
 import { env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 
-function stub(name: string) {
-  return env.CONVERSATION.get(env.CONVERSATION.idFromName(name));
+function conv(id: string) {
+  return env.CONVERSATION.get(env.CONVERSATION.idFromName(id));
 }
-
+function user(id: string) {
+  return env.USER.get(env.USER.idFromName(id));
+}
 async function post(s: DurableObjectStub, path: string, body: unknown) {
   return s.fetch(`https://do${path}`, { method: "POST", body: JSON.stringify(body) });
 }
+async function convRow(userId: string, convId: string) {
+  const list = await (await user(userId).fetch("https://do/conversations")).json<any[]>();
+  return list.find((c) => c.id === convId);
+}
 
-const draft = (conv: string, n: number, over: Record<string, unknown> = {}) => ({
-  id: `evt_${n}`,
-  conv,
-  ts: 1751780000 + n,
-  role: "agent",
+const textDraft = (id: string, convId: string, markdown: string, author = "自报") => ({
+  id,
+  conv: convId,
+  ts: 1751780500,
+  role: "user",
   agent: "claude-code",
   type: "text",
-  body: { markdown: `msg ${n}` },
-  ...over,
+  body: { markdown, author },
 });
 
-describe("ConversationDO", () => {
-  it("init 存 meta，初始 state=thinking", async () => {
-    const s = stub("cnv_a");
-    const res = await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
-    expect(res.status).toBe(200);
-    const meta = await (await s.fetch("https://do/meta")).json<any>();
-    expect(meta).toEqual({ machineId: "mch_m", machineName: "Mac", dir: "/x", state: "thinking" });
-  });
-
-  it("ingest 依次盖 seq，events?after 增量补齐", async () => {
-    const s = stub("cnv_b");
-    await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
-    const e1 = await (await post(s, "/ingest", { event: draft("cnv_b", 1) })).json<any>();
-    const e2 = await (await post(s, "/ingest", { event: draft("cnv_b", 2) })).json<any>();
-    expect(e1.seq).toBe(1);
-    expect(e2.seq).toBe(2);
-    const after1 = await (await s.fetch("https://do/events?after=1")).json<any[]>();
-    expect(after1.map((e) => e.seq)).toEqual([2]);
-    const all = await (await s.fetch("https://do/events?after=0")).json<any[]>();
-    expect(all.map((e) => e.id)).toEqual(["evt_1", "evt_2"]);
-  });
-
-  it("未知 type 的事件照收（宽松姿态）", async () => {
-    const s = stub("cnv_c");
-    await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
-    const res = await post(s, "/ingest", {
-      event: draft("cnv_c", 1, { type: "voice_note", body: { url: "x" } }),
+describe("ConversationDO 成员制扇出", () => {
+  it("ingest 扇出到所有成员，并服务端盖 author", async () => {
+    const [A, B, c] = ["usr_A1", "usr_B1", "cnv_g1"];
+    await post(user(A), "/index-conv", { conv: c, kind: "group", title: "群1" });
+    await post(user(B), "/index-conv", { conv: c, kind: "group", title: "群1" });
+    await post(conv(c), "/init", {
+      kind: "group",
+      title: "群1",
+      createdBy: A,
+      members: [
+        { userId: A, username: "alice" },
+        { userId: B, username: "bob" },
+      ],
     });
-    expect(res.status).toBe(200);
-    expect((await res.json<any>()).type).toBe("voice_note");
+
+    const res = await post(conv(c), "/ingest", {
+      event: textDraft("evt_g1", c, "大家好", "冒充别人"),
+      senderUsername: "alice",
+    });
+    const sealed = await res.json<any>();
+    expect(sealed.seq).toBe(1);
+    expect(sealed.body.author).toBe("alice"); // 服务端盖，压掉自报值
+
+    expect((await convRow(A, c)).lastMessage).toBe("大家好");
+    expect((await convRow(B, c)).lastMessage).toBe("大家好");
+    expect((await convRow(B, c)).lastSeq).toBe(1);
   });
 
-  it("status 事件更新 meta.state", async () => {
-    const s = stub("cnv_d");
-    await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
-    await post(s, "/ingest", { event: draft("cnv_d", 1, { type: "status", body: { state: "done" } }) });
-    const meta = await (await s.fetch("https://do/meta")).json<any>();
-    expect(meta.state).toBe("done");
+  it("拉人后 ingest 能到达新成员", async () => {
+    const [A, B, C, c] = ["usr_A2", "usr_B2", "usr_C2", "cnv_g2"];
+    for (const u of [A, B]) await post(user(u), "/index-conv", { conv: c, kind: "group", title: "群2" });
+    await post(conv(c), "/init", {
+      kind: "group",
+      title: "群2",
+      createdBy: A,
+      members: [
+        { userId: A, username: "alice" },
+        { userId: B, username: "bob" },
+      ],
+    });
+    const added = await (await post(conv(c), "/members", { userId: C, username: "carol" })).json<any>();
+    expect(added.added).toBe(true);
+    await post(user(C), "/index-conv", { conv: c, kind: "group", title: "群2" });
+
+    await post(conv(c), "/ingest", { event: textDraft("evt_g2", c, "欢迎 carol"), senderUsername: "alice" });
+    expect((await convRow(C, c)).lastMessage).toBe("欢迎 carol");
+
+    const members = await (await conv(c).fetch("https://do/members")).json<any[]>();
+    expect(members.map((m) => m.userId).sort()).toEqual([A, B, C].sort());
   });
 
-  it("patch 改写 text 事件的 markdown（落库存最终版）", async () => {
-    const s = stub("cnv_e");
-    await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
-    await post(s, "/ingest", { event: draft("cnv_e", 1) });
-    const res = await post(s, "/patch", { conv: "cnv_e", eventId: "evt_1", markdown: "final text" });
-    expect(res.status).toBe(200);
-    const all = await (await s.fetch("https://do/events?after=0")).json<any[]>();
-    expect(all[0].body.markdown).toBe("final text");
+  it("system 事件的 lastMessage 用其 text", async () => {
+    const [A, c] = ["usr_A3", "cnv_g3"];
+    await post(user(A), "/index-conv", { conv: c, kind: "group", title: "群3" });
+    await post(conv(c), "/init", { kind: "group", title: "群3", createdBy: A, members: [{ userId: A, username: "alice" }] });
+    await post(conv(c), "/ingest", {
+      event: { id: "evt_sys", conv: c, ts: 1751780600, role: "system", agent: "claude-code", type: "system", body: { text: "carol 进群" } },
+    });
+    expect((await convRow(A, c)).lastMessage).toBe("carol 进群");
   });
 
-  it("patch 未知 eventId 404", async () => {
-    const s = stub("cnv_f");
-    await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
-    expect((await post(s, "/patch", { conv: "cnv_f", eventId: "evt_nope", markdown: "x" })).status).toBe(404);
-  });
-
-  it("session 记 agentSessionId", async () => {
-    const s = stub("cnv_g");
-    await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
-    await post(s, "/session", { conv: "cnv_g", agentSessionId: "sess-1" });
-    const meta = await (await s.fetch("https://do/meta")).json<any>();
-    expect(meta.agentSessionId).toBe("sess-1");
-  });
-
-  it("ingest 非法 envelope 400", async () => {
-    const s = stub("cnv_h");
-    await post(s, "/init", { machineId: "mch_m", machineName: "Mac", dir: "/x" });
-    expect((await post(s, "/ingest", { event: { id: "bad" } })).status).toBe(400);
-  });
-
-  it("未 /init 直接 ingest 409（不再用空壳 meta 兜底）", async () => {
-    const s = stub("cnv_i");
-    const res = await post(s, "/ingest", { event: draft("cnv_i", 1) });
-    expect(res.status).toBe(409);
-    const meta = await (await s.fetch("https://do/meta")).json<any>();
-    expect(meta).toBeNull();
+  it("init 幂等：二次 init 不覆盖已有会话，只补成员", async () => {
+    const [A, B, c] = ["usr_A4", "usr_B4", "dm_usr_A4_usr_B4"];
+    await post(conv(c), "/init", { kind: "direct", title: "", createdBy: A, members: [{ userId: A, username: "alice" }] });
+    await post(conv(c), "/init", { kind: "direct", title: "", createdBy: B, members: [{ userId: B, username: "bob" }] });
+    const meta = await (await conv(c).fetch("https://do/meta")).json<any>();
+    expect(meta.createdBy).toBe(A); // 首次 createdBy 保留
+    const members = await (await conv(c).fetch("https://do/members")).json<any[]>();
+    expect(members.map((m) => m.userId).sort()).toEqual([A, B].sort());
   });
 });

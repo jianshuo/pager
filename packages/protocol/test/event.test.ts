@@ -69,6 +69,20 @@ describe("Event", () => {
   });
 });
 
+describe("system 事件（Mesh 进群/退群提示）", () => {
+  it("解析 system 事件", () => {
+    const evt = { ...validText, type: "system", role: "system", body: { text: "小林 进群" } };
+    expect(Event.parse(evt).type).toBe("system");
+  });
+});
+
+describe("放宽的 conv id（Mesh dm_ 直连）", () => {
+  it("接受 dm_ 前缀 conv id", () => {
+    const evt = { ...validText, conv: "dm_usr_a_usr_b" };
+    expect(() => Event.parse(evt)).not.toThrow();
+  });
+});
+
 describe("EventDraft", () => {
   it("无 seq 可解析", () => {
     const { seq, ...draft } = validText;

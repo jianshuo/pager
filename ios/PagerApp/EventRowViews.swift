@@ -18,6 +18,8 @@ struct EventRow: View {
         switch event.body {
         case .text(let markdown, let author):
             TextBubble(markdown: markdown, role: event.role, author: author)
+        case .system(let text):
+            SystemLine(text: text)
         case .toolCard(let tool, let title, let summary, let detail, let diff):
             ToolCardView(tool: tool, title: title, summary: summary, detail: detail, diff: diff)
         case .permissionRequest(let requestId, let tool, let description, let options):
@@ -55,9 +57,9 @@ private struct TextBubble: View {
     /// Sender display name (only present on human messages in rooms). nil ⇒ treated as mine.
     let author: String?
 
-    /// Mine = a human message I sent (no author, or author matches my display name). Right green.
+    /// Mine = a human message I sent (no author, or author matches my username). Right green.
     private var isMine: Bool {
-        role == "user" && (author == nil || author == Keychain.displayName)
+        role == "user" && (author == nil || author == Keychain.username)
     }
 
     /// The AI. Left cream bubble with the 百姓AI label + atom avatar.
@@ -401,6 +403,23 @@ private struct StatusLine: View {
     private func noteSuffixed(_ base: String) -> String {
         if let note, !note.isEmpty { return "\(base) · \(note)" }
         return base
+    }
+}
+
+// MARK: - System line (进群/退群/建群)
+
+private struct SystemLine: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textTertiary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Theme.cream.opacity(0.6))
+            .clipShape(Capsule())
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 2)
     }
 }
 

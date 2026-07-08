@@ -59,104 +59,85 @@ final class HubAPITests: XCTestCase {
         }
     }
 
-    // MARK: - machines()
+    // MARK: - register / login
 
-    func testMachinesDecodesA200Array() async throws {
+    func testRegisterDecodesAuthResult() async throws {
         let session = makeSession()
-        stub(status: 200, json: #"[{"id":"mch_1","name":"建硕的 Mac","online":true,"dirs":["/repo"]}]"#)
-        let api = makeAPI(session: session)
+        stub(status: 200, json: #"{"userId":"usr_1","username":"jianshuo","token":"stk_abc"}"#)
+        let api = makeAPI(session: session, token: nil) // register needs no prior token
 
-        let machines = try await api.machines()
-
-        XCTAssertEqual(machines.count, 1)
-        XCTAssertEqual(machines[0].id, "mch_1")
-        XCTAssertEqual(machines[0].name, "建硕的 Mac")
-        XCTAssertTrue(machines[0].online)
-        XCTAssertEqual(machines[0].dirs, ["/repo"])
+        let auth = try await api.register(username: "jianshuo", password: "hunter2")
+        XCTAssertEqual(auth.userId, "usr_1")
+        XCTAssertEqual(auth.username, "jianshuo")
+        XCTAssertEqual(auth.token, "stk_abc")
     }
 
-    func testMachinesThrowsNotConfiguredWhenTokenNil() async throws {
+    func testLoginThrowsUnauthorizedOn401() async throws {
+        let session = makeSession()
+        stub(status: 401, json: #"{"error":"用户名或密码不对"}"#)
+        let api = makeAPI(session: session, token: nil)
+
+        do {
+            _ = try await api.login(username: "x", password: "wrongpass")
+            XCTFail("expected HubError.unauthorized")
+        } catch HubError.unauthorized {
+            // expected
+        }
+    }
+
+    func testRegisterThrowsConflictOn409() async throws {
+        let session = makeSession()
+        stub(status: 409, json: #"{"error":"用户名已被占用"}"#)
+        let api = makeAPI(session: session, token: nil)
+
+        do {
+            _ = try await api.register(username: "taken", password: "hunter2")
+            XCTFail("expected HubError.conflict")
+        } catch HubError.conflict {
+            // expected
+        }
+    }
+
+    // MARK: - authed endpoints
+
+    func testConversationsThrowsNotConfiguredWhenTokenNil() async throws {
         let session = makeSession()
         stub(status: 200, json: "[]")
         let api = makeAPI(session: session, token: nil)
 
         do {
-            _ = try await api.machines()
+            _ = try await api.conversations()
             XCTFail("expected HubError.notConfigured")
         } catch HubError.notConfigured {
             // expected
         }
     }
 
-    // MARK: - newConversation()
-
-    func testNewConversationReturnsCreatedOn201() async throws {
+    func testSearchUsersDecodesArray() async throws {
         let session = makeSession()
-        stub(status: 201, json: #"{"id":"cnv_x"}"#)
+        stub(status: 200, json: #"[{"userId":"usr_2","username":"xiaolin"}]"#)
         let api = makeAPI(session: session)
 
-        let result = try await api.newConversation(machineId: "mch_1", dir: "/repo", message: "hi")
-
-        XCTAssertEqual(result, .created("cnv_x"))
+        let users = try await api.searchUsers(query: "xiao")
+        XCTAssertEqual(users.count, 1)
+        XCTAssertEqual(users[0].username, "xiaolin")
     }
 
-    func testNewConversationReturnsCreatedButFailedOn502() async throws {
+    func testDirectConversationReturnsConvId() async throws {
         let session = makeSession()
-        stub(status: 502, json: #"{"error":"daemon went offline"}"#)
+        stub(status: 201, json: #"{"id":"dm_a_b"}"#)
         let api = makeAPI(session: session)
 
-        let result = try await api.newConversation(machineId: "mch_1", dir: "/repo", message: "hi")
-
-        XCTAssertEqual(result, .createdButFailed)
+        let conv = try await api.directConversation(userId: "usr_b")
+        XCTAssertEqual(conv, "dm_a_b")
     }
 
-    func testNewConversationThrowsMachineOfflineOn409() async throws {
+    func testNewGroupReturnsConvId() async throws {
         let session = makeSession()
-        stub(status: 409, json: #"{"error":"machine offline"}"#)
+        stub(status: 201, json: #"{"id":"cnv_g"}"#)
         let api = makeAPI(session: session)
 
-        do {
-            _ = try await api.newConversation(machineId: "mch_1", dir: "/repo", message: "hi")
-            XCTFail("expected HubError.machineOffline")
-        } catch HubError.machineOffline {
-            // expected
-        }
-    }
-
-    func testNewConversationThrowsBadRequestOn400() async throws {
-        let session = makeSession()
-        stub(status: 400, json: #"{"error":"dir not allowed"}"#)
-        let api = makeAPI(session: session)
-
-        do {
-            _ = try await api.newConversation(machineId: "mch_1", dir: "/nope", message: "hi")
-            XCTFail("expected HubError.badRequest")
-        } catch HubError.badRequest(let message) {
-            XCTAssertEqual(message, "dir not allowed")
-        }
-    }
-
-    // MARK: - permissionResponse()
-
-    func testPermissionResponseSucceedsOn200() async throws {
-        let session = makeSession()
-        stub(status: 200, json: #"{"ok":true}"#)
-        let api = makeAPI(session: session)
-
-        try await api.permissionResponse(conv: "cnv_1", requestId: "req_1", choice: "allow")
-        // no throw == success
-    }
-
-    func testPermissionResponseThrowsNotFoundOn404() async throws {
-        let session = makeSession()
-        stub(status: 404, json: #"{"error":"unknown conversation"}"#)
-        let api = makeAPI(session: session)
-
-        do {
-            try await api.permissionResponse(conv: "cnv_missing", requestId: "req_1", choice: "allow")
-            XCTFail("expected HubError.notFound")
-        } catch HubError.notFound {
-            // expected
-        }
+        let conv = try await api.newGroup(title: "家人群", members: ["usr_b"])
+        XCTAssertEqual(conv, "cnv_g")
     }
 }

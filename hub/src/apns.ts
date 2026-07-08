@@ -33,22 +33,14 @@ const STATE_ZH: Record<string, string> = {
 };
 
 // 纯函数推送裁决——spec §1 推送规则
-export function pushPlanFor(event: EventLoose, meta: { machineName: string }): PushPlan | null {
+// Mesh：只推真人文本消息（system/status 等不打扰）。title 为群名或发送者名，body 为消息正文。
+export function pushPlanFor(event: EventLoose, meta: { title: string }): PushPlan | null {
   const b = event.body as Record<string, unknown> | undefined;
-  if (event.type === "permission_request") {
+  if (event.type === "text" && typeof b?.markdown === "string") {
     return {
-      title: `需要批准 · ${meta.machineName}`,
-      body: typeof b?.description === "string" ? b.description : "",
+      title: meta.title || "新消息",
+      body: b.markdown.slice(0, 120),
       priority: 10,
-      category: "PERMISSION_REQUEST",
-      request_id: typeof b?.request_id === "string" ? b.request_id : undefined,
-    };
-  }
-  if (event.type === "status" && typeof b?.state === "string" && b.state in STATE_ZH) {
-    return {
-      title: `${meta.machineName} · ${STATE_ZH[b.state]}`,
-      body: typeof b?.note === "string" ? b.note : "",
-      priority: 5,
     };
   }
   return null;

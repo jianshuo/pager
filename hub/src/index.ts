@@ -2,97 +2,144 @@ import type { Env } from "./env.js";
 import { ConversationDO } from "./conversation-do.js";
 import { MachineDO } from "./machine-do.js";
 import { UserDO } from "./user-do.js";
+import { DirectoryDO } from "./directory-do.js";
 import {
-  NewConversationRequest,
-  NewConversationResponse,
-  PermissionResponseRequest,
+  RegisterRequest,
+  LoginRequest,
+  AddFriendRequest,
+  DirectConversationRequest,
+  NewGroupRequest,
+  AddMemberRequest,
   DeviceRegistration,
   newId,
-  type EventDraft,
 } from "@pager/protocol";
 import { ZodError } from "zod";
 
-export { ConversationDO, MachineDO, UserDO };
+// MachineDO 仍绑定但不再路由（Pager 遗留，待后续 deleted_classes 迁移清理）
+export { ConversationDO, MachineDO, UserDO, DirectoryDO };
 
 function bearer(req: Request): string | null {
   const h = req.headers.get("Authorization") ?? "";
   return h.startsWith("Bearer ") ? h.slice(7) : null;
 }
 
-export function user(env: Env): DurableObjectStub {
-  return env.USER.get(env.USER.idFromName("user"));
+function directory(env: Env): DurableObjectStub {
+  return env.DIRECTORY.get(env.DIRECTORY.idFromName("directory"));
+}
+function userStub(env: Env, userId: string): DurableObjectStub {
+  return env.USER.get(env.USER.idFromName(userId));
+}
+function convStub(env: Env, conv: string): DurableObjectStub {
+  return env.CONVERSATION.get(env.CONVERSATION.idFromName(conv));
 }
 
-// 解析客户端身份：工作区 CLIENT_TOKEN（老单人，无身份名，author 自报）
-// 或已注册的个人 token（有 userId+name，服务端盖 author）。都不是 → 拒绝。
-async function resolveClient(
-  env: Env,
-  token: string | null
-): Promise<{ ok: boolean; userId?: string; name?: string }> {
-  if (!token) return { ok: false };
-  if (token === env.CLIENT_TOKEN) return { ok: true };
+interface Identity {
+  userId: string;
+  username: string;
+}
+
+async function resolveSession(env: Env, token: string | null): Promise<Identity | null> {
+  if (!token) return null;
   const who = await (
-    await user(env).fetch("https://do/whoami", { method: "POST", body: JSON.stringify({ token }) })
-  ).json<{ userId: string; name: string } | null>();
-  return who ? { ok: true, userId: who.userId, name: who.name } : { ok: false };
+    await directory(env).fetch("https://do/resolve", { method: "POST", body: JSON.stringify({ token }) })
+  ).json<Identity | null>();
+  return who;
+}
+
+// 批量把 userId 解析成 username（未知 id 被跳过）
+async function resolveNames(env: Env, ids: string[]): Promise<Map<string, string>> {
+  const rows = await (
+    await directory(env).fetch("https://do/names", { method: "POST", body: JSON.stringify({ userIds: ids }) })
+  ).json<{ userId: string; username: string }[]>();
+  return new Map(rows.map((r) => [r.userId, r.username]));
+}
+
+async function jsonBody<T>(req: Request): Promise<T> {
+  return (await req.json()) as T;
 }
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
-    if (url.pathname === "/health") return Response.json({ ok: true });
+    const path = url.pathname;
+    if (path === "/health") return Response.json({ ok: true });
 
     const token = bearer(req);
 
-    if (url.pathname === "/ws/daemon") {
-      if (token !== env.DAEMON_TOKEN) return new Response("unauthorized", { status: 401 });
-      const machineId = url.searchParams.get("machine");
-      if (!machineId?.startsWith("mch_")) return new Response("bad machine id", { status: 400 });
-      return env.MACHINE.get(env.MACHINE.idFromName(machineId)).fetch(new Request("https://do/ws", req));
+    // 公开：注册 / 登录
+    try {
+      if (path === "/api/register" && req.method === "POST")
+        return directory(env).fetch("https://do/register", {
+          method: "POST",
+          body: JSON.stringify(RegisterRequest.parse(await req.json())),
+        });
+      if (path === "/api/login" && req.method === "POST")
+        return directory(env).fetch("https://do/login", {
+          method: "POST",
+          body: JSON.stringify(LoginRequest.parse(await req.json())),
+        });
+    } catch (err) {
+      if (err instanceof ZodError) return Response.json({ error: err.issues }, { status: 400 });
+      if (err instanceof SyntaxError) return Response.json({ error: "malformed json" }, { status: 400 });
+      throw err;
     }
 
-    // 注册新用户：需要工作区 CLIENT_TOKEN（凭它加入工作区），返回个人 token
-    if (url.pathname === "/api/users" && req.method === "POST") {
-      if (token !== env.CLIENT_TOKEN) return new Response("unauthorized", { status: 401 });
-      const { name } = await req.json<{ name?: string }>().catch(() => ({ name: "" }));
-      return user(env).fetch(new Request("https://do/register", {
-        method: "POST",
-        body: JSON.stringify({ name: name ?? "" }),
-      }));
-    }
+    // 其余全部需要有效 session
+    const me = await resolveSession(env, token);
+    if (!me) return new Response("unauthorized", { status: 401 });
 
-    // 客户端鉴权：接受工作区 CLIENT_TOKEN（老单人身份，author 自报）或已注册的个人 token
-    const identity = await resolveClient(env, token);
-    if (!identity.ok) return new Response("unauthorized", { status: 401 });
-
-    if (url.pathname === "/ws/client") {
-      // 把认证出的身份名传给 UserDO，挂到 socket 上，send 时盖 author
+    // WebSocket：把身份带进 UserDO
+    if (path === "/ws/client") {
       const wsUrl = new URL("https://do/ws");
-      if (identity.name) {
-        wsUrl.searchParams.set("user", identity.userId!);
-        wsUrl.searchParams.set("name", identity.name);
-      }
-      return user(env).fetch(new Request(wsUrl.toString(), req));
+      wsUrl.searchParams.set("user", me.userId);
+      wsUrl.searchParams.set("name", me.username);
+      return userStub(env, me.userId).fetch(new Request(wsUrl.toString(), req));
     }
 
     try {
-      if (url.pathname === "/api/machines" && req.method === "GET")
-        return user(env).fetch("https://do/machines");
-      if (url.pathname === "/api/conversations" && req.method === "GET")
-        return user(env).fetch("https://do/conversations");
-      if (url.pathname === "/api/conversations" && req.method === "POST")
-        return await newConversation(env, await req.json());
-      if (url.pathname === "/api/rooms" && req.method === "POST")
-        return await newRoom(env, await req.json());
-      if (url.pathname === "/api/permission-response" && req.method === "POST")
-        return await permissionResponse(env, await req.json());
-      if (url.pathname === "/api/register-device" && req.method === "POST") {
-        const body = DeviceRegistration.parse(await req.json());
-        return user(env).fetch("https://do/register-device", {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
+      if (path === "/api/me" && req.method === "GET")
+        return Response.json({ userId: me.userId, username: me.username });
+
+      if (path === "/api/logout" && req.method === "POST")
+        return directory(env).fetch("https://do/logout", { method: "POST", body: JSON.stringify({ token }) });
+
+      if (path === "/api/users" && req.method === "GET")
+        return directory(env).fetch(`https://do/search?q=${encodeURIComponent(url.searchParams.get("q") ?? "")}`);
+
+      if (path === "/api/friends" && req.method === "GET")
+        return userStub(env, me.userId).fetch("https://do/friends");
+
+      if (path === "/api/friends" && req.method === "POST")
+        return await addFriend(env, me, AddFriendRequest.parse(await req.json()));
+
+      if (path.startsWith("/api/friends/") && req.method === "DELETE") {
+        const id = decodeURIComponent(path.slice("/api/friends/".length));
+        return userStub(env, me.userId).fetch(`https://do/friends/${encodeURIComponent(id)}`, { method: "DELETE" });
       }
+
+      if (path === "/api/conversations" && req.method === "GET")
+        return userStub(env, me.userId).fetch("https://do/conversations");
+
+      if (path === "/api/conversations/direct" && req.method === "POST")
+        return await directConversation(env, me, DirectConversationRequest.parse(await req.json()));
+
+      if (path === "/api/groups" && req.method === "POST")
+        return await newGroup(env, me, NewGroupRequest.parse(await req.json()));
+
+      // /api/conversations/:id/members  (POST 拉人)  /members/me (DELETE 退群)
+      const memberMatch = path.match(/^\/api\/conversations\/([^/]+)\/members(\/me)?$/);
+      if (memberMatch) {
+        const conv = decodeURIComponent(memberMatch[1]);
+        if (req.method === "POST" && !memberMatch[2])
+          return await addMember(env, me, conv, AddMemberRequest.parse(await req.json()));
+        if (req.method === "DELETE" && memberMatch[2]) return await leaveConversation(env, me, conv);
+      }
+
+      if (path === "/api/register-device" && req.method === "POST")
+        return userStub(env, me.userId).fetch("https://do/register-device", {
+          method: "POST",
+          body: JSON.stringify(DeviceRegistration.parse(await req.json())),
+        });
     } catch (err) {
       if (err instanceof ZodError) return Response.json({ error: err.issues }, { status: 400 });
       if (err instanceof SyntaxError) return Response.json({ error: "malformed json" }, { status: 400 });
@@ -106,114 +153,101 @@ function nowSec(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-async function newConversation(env: Env, raw: unknown): Promise<Response> {
-  const body = NewConversationRequest.parse(raw);
-  const machine = env.MACHINE.get(env.MACHINE.idFromName(body.machineId));
-  const info = await (await machine.fetch("https://do/info")).json<{
-    machine: { id: string; name: string };
-    dirs: string[];
-    online: boolean;
-  } | null>();
-  if (!info?.online) return Response.json({ error: "machine offline" }, { status: 409 });
-  if (!info.dirs.includes(body.dir)) return Response.json({ error: "dir not allowed" }, { status: 400 });
-
-  const conv = newId("cnv");
-  const convStub = env.CONVERSATION.get(env.CONVERSATION.idFromName(conv));
-  const initRes = await convStub.fetch("https://do/init", {
+async function addFriend(env: Env, me: Identity, body: { userId: string }): Promise<Response> {
+  const names = await resolveNames(env, [body.userId]);
+  const username = names.get(body.userId);
+  if (!username) return Response.json({ error: "查无此人" }, { status: 404 });
+  await userStub(env, me.userId).fetch("https://do/friends", {
     method: "POST",
-    body: JSON.stringify({ machineId: body.machineId, machineName: info.machine.name, dir: body.dir }),
+    body: JSON.stringify({ userId: body.userId, username }),
   });
-  if (!initRes.ok) return Response.json({ error: "failed to initialize conversation" }, { status: 500 });
-
-  const draft: EventDraft = {
-    id: newId("evt"),
-    conv,
-    ts: nowSec(),
-    role: "user",
-    agent: "claude-code",
-    type: "text",
-    body: { markdown: body.message },
-  };
-  const ingestRes = await convStub.fetch("https://do/ingest", {
-    method: "POST",
-    body: JSON.stringify({ event: draft }),
-  });
-  if (!ingestRes.ok) return Response.json({ error: "failed to ingest task message" }, { status: 500 });
-  const sealed = await ingestRes.json();
-
-  const deliverRes = await machine.fetch("https://do/deliver", {
-    method: "POST",
-    body: JSON.stringify({ kind: "task", conv, dir: body.dir, agent: "claude-code", event: sealed }),
-  });
-  const { delivered } = await deliverRes.json<{ delivered: boolean }>();
-  if (!delivered) {
-    const failDraft: EventDraft = {
-      id: newId("evt"),
-      conv,
-      ts: nowSec(),
-      role: "system",
-      agent: "claude-code",
-      type: "status",
-      body: { state: "failed", note: "daemon 掉线，任务未送达" },
-    };
-    await convStub.fetch("https://do/ingest", { method: "POST", body: JSON.stringify({ event: failDraft }) });
-    return Response.json({ error: "daemon went offline" }, { status: 502 });
-  }
-  return Response.json(NewConversationResponse.parse({ id: conv }), { status: 201 });
+  return Response.json({ ok: true, userId: body.userId, username });
 }
 
-// 人对人聊天房间：一个没有机器/daemon 的会话。两个人订阅同一个 conv、互发 text，
-// 靠 UserDO 广播互相看到。machineName 复用为房间标题。
-async function newRoom(env: Env, raw: unknown): Promise<Response> {
-  const r = (raw ?? {}) as { title?: unknown; machineId?: unknown; dir?: unknown };
-  const title = typeof r.title === "string" ? r.title.trim() : "";
-  if (!title) return Response.json({ error: "title required" }, { status: 400 });
-  // 可选绑定一台机器 + 目录作为房间的 AI 工作区（@百姓AI 时派活）
-  const machineId = typeof r.machineId === "string" ? r.machineId : "";
-  const dir = typeof r.dir === "string" ? r.dir : "";
-  const conv = newId("cnv");
-  const convStub = env.CONVERSATION.get(env.CONVERSATION.idFromName(conv));
-  const initRes = await convStub.fetch("https://do/init", {
+// 1:1：确定性 conv id，双方任一发起都命中同一会话；双方索引各登记一条。
+async function directConversation(env: Env, me: Identity, body: { userId: string }): Promise<Response> {
+  if (body.userId === me.userId) return Response.json({ error: "不能和自己聊" }, { status: 400 });
+  const names = await resolveNames(env, [body.userId]);
+  const peerName = names.get(body.userId);
+  if (!peerName) return Response.json({ error: "查无此人" }, { status: 404 });
+
+  const [a, b] = [me.userId, body.userId].sort();
+  const conv = `dm_${a}_${b}`;
+  await convStub(env, conv).fetch("https://do/init", {
     method: "POST",
-    body: JSON.stringify({ machineId, machineName: title, dir }),
+    body: JSON.stringify({
+      kind: "direct",
+      title: "",
+      createdBy: me.userId,
+      members: [
+        { userId: me.userId, username: me.username },
+        { userId: body.userId, username: peerName },
+      ],
+    }),
   });
-  if (!initRes.ok) return Response.json({ error: "failed to create room" }, { status: 500 });
-  // 立刻登记进会话索引（kind='room' + 绑定），无消息也能出现在列表
-  await user(env).fetch("https://do/room", {
-    method: "POST",
-    body: JSON.stringify({ conv, title, machineId, dir }),
-  });
+  await indexConv(env, me.userId, { conv, kind: "direct", peerUserId: body.userId, peerUsername: peerName });
+  await indexConv(env, body.userId, { conv, kind: "direct", peerUserId: me.userId, peerUsername: me.username });
   return Response.json({ id: conv }, { status: 201 });
 }
 
-async function permissionResponse(env: Env, raw: unknown): Promise<Response> {
-  const body = PermissionResponseRequest.parse(raw);
-  const convStub = env.CONVERSATION.get(env.CONVERSATION.idFromName(body.conv));
-  const meta = await (await convStub.fetch("https://do/meta")).json<{ machineId: string } | null>();
-  if (!meta) return Response.json({ error: "unknown conversation" }, { status: 404 });
-
-  const draft: EventDraft = {
-    id: newId("evt"),
-    conv: body.conv,
-    ts: nowSec(),
-    role: "user",
-    agent: "claude-code",
-    type: "permission_response",
-    body: { request_id: body.request_id, choice: body.choice },
-  };
-  const ingestRes = await convStub.fetch("https://do/ingest", {
+async function newGroup(env: Env, me: Identity, body: { title: string; members: string[] }): Promise<Response> {
+  const conv = newId("cnv");
+  const ids = [...new Set([me.userId, ...body.members])];
+  const names = await resolveNames(env, ids);
+  const members = ids.map((id) => ({ userId: id, username: names.get(id) ?? id }));
+  await convStub(env, conv).fetch("https://do/init", {
     method: "POST",
-    body: JSON.stringify({ event: draft }),
+    body: JSON.stringify({ kind: "group", title: body.title, createdBy: me.userId, members }),
   });
-  if (!ingestRes.ok) return Response.json({ error: "failed to ingest permission response" }, { status: 500 });
-  const sealed = await ingestRes.json();
+  for (const id of ids) await indexConv(env, id, { conv, kind: "group", title: body.title });
+  await ingestSystem(env, conv, `${me.username} 创建了群「${body.title}」`);
+  return Response.json({ id: conv }, { status: 201 });
+}
 
-  const deliverRes = await env.MACHINE.get(env.MACHINE.idFromName(meta.machineId)).fetch("https://do/deliver", {
+async function addMember(env: Env, me: Identity, conv: string, body: { userId: string }): Promise<Response> {
+  const meta = await (await convStub(env, conv).fetch("https://do/meta")).json<{ kind: string; title: string } | null>();
+  if (!meta) return Response.json({ error: "会话不存在" }, { status: 404 });
+  const names = await resolveNames(env, [body.userId]);
+  const username = names.get(body.userId);
+  if (!username) return Response.json({ error: "查无此人" }, { status: 404 });
+  await convStub(env, conv).fetch("https://do/members", {
     method: "POST",
-    body: JSON.stringify({ kind: "user_event", conv: body.conv, event: sealed }),
+    body: JSON.stringify({ userId: body.userId, username }),
   });
-  const { delivered } = await deliverRes.json<{ delivered: boolean }>();
-  // daemon 掉线的兜底是它自身的超时拒绝逻辑，这里不再补状态事件
-  if (!delivered) return Response.json({ error: "daemon offline" }, { status: 502 });
+  await indexConv(env, body.userId, { conv, kind: meta.kind, title: meta.title });
+  await ingestSystem(env, conv, `${username} 进群`);
   return Response.json({ ok: true });
+}
+
+async function leaveConversation(env: Env, me: Identity, conv: string): Promise<Response> {
+  await convStub(env, conv).fetch(`https://do/members/${encodeURIComponent(me.userId)}`, { method: "DELETE" });
+  await userStub(env, me.userId).fetch(`https://do/conversations/${encodeURIComponent(conv)}`, { method: "DELETE" });
+  await ingestSystem(env, conv, `${me.username} 退群`);
+  return Response.json({ ok: true });
+}
+
+async function indexConv(
+  env: Env,
+  userId: string,
+  body: { conv: string; kind: string; title?: string; peerUserId?: string; peerUsername?: string }
+): Promise<void> {
+  await userStub(env, userId).fetch("https://do/index-conv", { method: "POST", body: JSON.stringify(body) });
+}
+
+// Worker 直接注入的系统事件（进群/退群/建群），无 senderUserId → ConversationDO 跳过成员校验。
+async function ingestSystem(env: Env, conv: string, text: string): Promise<void> {
+  await convStub(env, conv).fetch("https://do/ingest", {
+    method: "POST",
+    body: JSON.stringify({
+      event: {
+        id: newId("evt"),
+        conv,
+        ts: nowSec(),
+        role: "system",
+        agent: "claude-code",
+        type: "system",
+        body: { text },
+      },
+    }),
+  });
 }

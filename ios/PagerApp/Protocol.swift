@@ -2,6 +2,7 @@ import Foundation
 
 enum EventBody {
     case text(markdown: String, author: String?)
+    case system(text: String)
     case toolCard(tool: String, title: String, summary: String, detail: String, diff: String?)
     case permissionRequest(requestId: String, tool: String, description: String, options: [String])
     case permissionResponse(requestId: String, choice: String)
@@ -36,7 +37,7 @@ struct Event: Decodable, Identifiable {
     }
 
     enum BodyKeys: String, CodingKey {
-        case markdown, author, tool, title, summary, detail, diff
+        case markdown, author, text, tool, title, summary, detail, diff
         case request_id, description, options, choice, state, note, message, recoverable
     }
 
@@ -46,6 +47,8 @@ struct Event: Decodable, Identifiable {
         case "text":
             return .text(markdown: (try? b.decode(String.self, forKey: .markdown)) ?? "",
                          author: try? b.decode(String.self, forKey: .author))
+        case "system":
+            return .system(text: (try? b.decode(String.self, forKey: .text)) ?? "")
         case "tool_card":
             return .toolCard(
                 tool: (try? b.decode(String.self, forKey: .tool)) ?? "",
@@ -102,44 +105,50 @@ enum JSONValue: Codable {
     }
 }
 
-struct MachineSummary: Decodable, Identifiable {
-    let id: String; let name: String; let online: Bool; let dirs: [String]
+/// A user (search result / friend): the handle others add you by.
+struct UserSummary: Decodable, Identifiable, Hashable {
+    let userId: String
+    let username: String
+    var id: String { userId }
 }
+
+/// A conversation in the home list. 1:1 shows the peer's username; a group shows its title.
 struct ConversationSummary: Decodable, Identifiable {
-    let id: String; let machineId: String; let machineName: String; let dir: String
-    let state: String; let lastMessage: String; let lastSeq: Int; let updatedAt: Int
-    /// "room" | "machine". The hub only recently added this; older responses omit it, so we
-    /// default to "machine" when the key is absent to stay backward compatible.
-    let kind: String
+    let id: String
+    let kind: String            // "direct" | "group"
+    let title: String
+    let peerUserId: String
+    let peerUsername: String
+    let lastMessage: String
+    let lastSeq: Int
+    let updatedAt: Int
 
     enum CodingKeys: String, CodingKey {
-        case id, machineId, machineName, dir, state, lastMessage, lastSeq, updatedAt, kind
+        case id, kind, title, peerUserId, peerUsername, lastMessage, lastSeq, updatedAt
     }
 
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        machineId = try c.decode(String.self, forKey: .machineId)
-        machineName = try c.decode(String.self, forKey: .machineName)
-        dir = try c.decode(String.self, forKey: .dir)
-        state = try c.decode(String.self, forKey: .state)
-        lastMessage = try c.decode(String.self, forKey: .lastMessage)
-        lastSeq = try c.decode(Int.self, forKey: .lastSeq)
-        updatedAt = try c.decode(Int.self, forKey: .updatedAt)
-        kind = (try? c.decode(String.self, forKey: .kind)) ?? "machine"
+        kind = try c.decode(String.self, forKey: .kind)
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        peerUserId = (try? c.decode(String.self, forKey: .peerUserId)) ?? ""
+        peerUsername = (try? c.decode(String.self, forKey: .peerUsername)) ?? ""
+        lastMessage = (try? c.decode(String.self, forKey: .lastMessage)) ?? ""
+        lastSeq = (try? c.decode(Int.self, forKey: .lastSeq)) ?? 0
+        updatedAt = (try? c.decode(Int.self, forKey: .updatedAt)) ?? 0
     }
 
-    /// Memberwise initializer for tests/previews (the custom `init(from:)` suppresses synthesis).
-    init(id: String, machineId: String, machineName: String, dir: String,
-         state: String, lastMessage: String, lastSeq: Int, updatedAt: Int, kind: String = "machine") {
-        self.id = id; self.machineId = machineId; self.machineName = machineName; self.dir = dir
-        self.state = state; self.lastMessage = lastMessage; self.lastSeq = lastSeq
-        self.updatedAt = updatedAt; self.kind = kind
+    init(id: String, kind: String, title: String = "", peerUserId: String = "", peerUsername: String = "",
+         lastMessage: String = "", lastSeq: Int = 0, updatedAt: Int = 0) {
+        self.id = id; self.kind = kind; self.title = title; self.peerUserId = peerUserId
+        self.peerUsername = peerUsername; self.lastMessage = lastMessage
+        self.lastSeq = lastSeq; self.updatedAt = updatedAt
     }
 
-    /// An AI-enabled room: a room conversation with a machine+dir bound as the AI's workspace.
-    /// In such a room, "@百姓AI" in a message dispatches a Claude task to the bound daemon.
-    var isAIRoom: Bool { kind == "room" && !machineId.isEmpty }
+    var isGroup: Bool { kind == "group" }
+    /// The name shown in the list / nav bar.
+    var displayName: String { isGroup ? title : peerUsername }
 }
 
 // 上行草稿（无 seq）
@@ -152,21 +161,16 @@ extension Event {
     /// Memberwise-style initializer for constructing patched copies. `init(from:)` above is a
     /// custom Decodable initializer, so Swift does not synthesize a memberwise init for us.
     init(id: String, conv: String, seq: Int, ts: Int, role: String, agent: String, type: String, body: EventBody) {
-        self.id = id
-        self.conv = conv
-        self.seq = seq
-        self.ts = ts
-        self.role = role
-        self.agent = agent
-        self.type = type
-        self.body = body
+        self.id = id; self.conv = conv; self.seq = seq; self.ts = ts
+        self.role = role; self.agent = agent; self.type = type; self.body = body
     }
 
     /// Applies a `patch` frame: hub patches replace (not append to) a text event's markdown
     /// in place. Returns `self` unchanged if this event isn't a `.text` event.
     func withPatchedText(_ markdown: String) -> Event {
         guard case .text(_, let author) = body else { return self }
-        return Event(id: id, conv: conv, seq: seq, ts: ts, role: role, agent: agent, type: type, body: .text(markdown: markdown, author: author))
+        return Event(id: id, conv: conv, seq: seq, ts: ts, role: role, agent: agent, type: type,
+                     body: .text(markdown: markdown, author: author))
     }
 }
 
@@ -190,9 +194,7 @@ enum ClientMessage: Encodable {
 enum ServerMessage: Decodable {
     case event(Event)
     case patch(conv: String, eventId: String, markdown: String)
-    case machineStatus(machine: MachineSummaryLite, online: Bool)
-    struct MachineSummaryLite: Decodable { let id: String; let name: String }
-    enum K: String, CodingKey { case kind, event, conv, eventId, markdown, machine, online }
+    enum K: String, CodingKey { case kind, event, conv, eventId, markdown }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         switch try c.decode(String.self, forKey: .kind) {
@@ -200,8 +202,6 @@ enum ServerMessage: Decodable {
         case "patch": self = .patch(conv: try c.decode(String.self, forKey: .conv),
                                     eventId: try c.decode(String.self, forKey: .eventId),
                                     markdown: try c.decode(String.self, forKey: .markdown))
-        case "machine_status": self = .machineStatus(machine: try c.decode(MachineSummaryLite.self, forKey: .machine),
-                                                     online: try c.decode(Bool.self, forKey: .online))
         case let k: throw DecodingError.dataCorruptedError(forKey: .kind, in: c, debugDescription: "unknown kind \(k)")
         }
     }

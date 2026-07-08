@@ -1,7 +1,8 @@
 export interface Env {
   CONVERSATION: DurableObjectNamespace;
-  MACHINE: DurableObjectNamespace;
   USER: DurableObjectNamespace;
+  DIRECTORY: DurableObjectNamespace;
+  MACHINE: DurableObjectNamespace; // 过渡：Phase 4 路由重写后移除
   DAEMON_TOKEN: string;
   CLIENT_TOKEN: string;
   // APNs——未配置时推送静默跳过（Task 6）
