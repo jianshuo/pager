@@ -1,0 +1,1 @@
+Mesh 是一个即时通讯 app，需要账号登录。已提供演示账号，登录后可加好友、建群、聊天。/ Mesh is a chat app; a demo account is provided. Log in to add friends, create groups, and message in real time.
