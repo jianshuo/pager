@@ -123,7 +123,9 @@ export class ConversationDO extends DurableObject<Env> {
 
     // 人类 text 消息 → bot 派发（异步，不阻塞 ingest）。bot 自己的消息 role=agent，不触发（防死循环）。
     if (event.type === "text" && event.role === "user") {
-      this.ctx.waitUntil(this.dispatchBots(event));
+      this.ctx.waitUntil(
+        this.dispatchBots(event).catch((e) => console.error(`[dispatch] error: ${(e as Error)?.message}`))
+      );
     }
     return Response.json(event);
   }
