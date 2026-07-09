@@ -92,12 +92,22 @@ private struct TextBubble: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
-    // AI：奶白气泡，左对齐，左上角 5px；上方琥珀「百姓AI」名，左侧原子头像
+    /// AI 成员的显示名：内置 bot 用规范大小写，其它 bot 用其用户名。
+    private var botName: String {
+        switch author {
+        case "claude": return "Claude"
+        case "chatgpt": return "ChatGPT"
+        case let a? where !a.isEmpty: return a
+        default: return "AI"
+        }
+    }
+
+    // AI：奶白气泡，左对齐，左上角 5px；上方琥珀 bot 名，左侧原子头像
     private var aiBubble: some View {
         HStack(alignment: .top, spacing: 8) {
             AIAvatar(size: 32)
             VStack(alignment: .leading, spacing: 3) {
-                Text("百姓AI")
+                Text(botName)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Theme.amberText)
                 rendered
