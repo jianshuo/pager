@@ -143,9 +143,29 @@ export class ConversationDO extends DurableObject<Env> {
       const d = await (await this.dir().fetch(`https://do/bot?userId=${bot.userId}`)).json<{
         backend: string;
         model: string;
+        ownerId?: string;
+        machineId?: string;
+        dir?: string;
       } | null>();
-      if (!d || (d.backend !== "claude" && d.backend !== "chatgpt")) continue; // A 期只处理聊天 bot
-      await this.hubRespond(event.conv, bot, d.backend, d.model);
+      if (!d) continue;
+      if (d.backend === "claude" || d.backend === "chatgpt") {
+        await this.hubRespond(event.conv, bot, d.backend, d.model);
+      } else if (d.backend === "agent" && d.machineId) {
+        // 干活 bot：把这条消息作为 task 派给绑定机器的 daemon；daemon 跑 Claude Code，
+        // 事件由 MachineDO 以 bot 身份 ingest 回本会话（含权限请求带 owner_id）。
+        await this.env.MACHINE.get(this.env.MACHINE.idFromName(d.machineId)).fetch("https://do/deliver", {
+          method: "POST",
+          body: JSON.stringify({
+            kind: "task",
+            conv: event.conv,
+            dir: d.dir ?? "",
+            agent: "claude-code",
+            botUsername: bot.username,
+            ownerId: d.ownerId ?? "",
+            event,
+          }),
+        });
+      }
     }
   }
 

@@ -86,6 +86,14 @@ export default {
       throw err;
     }
 
+    // 干活 bot 的机器 daemon 连这里（共享 DAEMON_TOKEN，非 session）。转给对应 MachineDO。
+    if (path === "/ws/daemon") {
+      if (token !== env.DAEMON_TOKEN) return new Response("unauthorized", { status: 401 });
+      const machineId = url.searchParams.get("machine");
+      if (!machineId?.startsWith("mch_")) return new Response("bad machine id", { status: 400 });
+      return env.MACHINE.get(env.MACHINE.idFromName(machineId)).fetch(new Request("https://do/ws", req));
+    }
+
     // 运维：按用户名删账号，用工作区密钥 CLIENT_TOKEN 保护（非 session）。释放被占用的用户名。
     if (path.startsWith("/api/admin/users/") && req.method === "DELETE") {
       if (!token || token !== env.CLIENT_TOKEN) return new Response("unauthorized", { status: 401 });

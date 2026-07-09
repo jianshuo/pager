@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { DaemonHello, DaemonPatch, DaemonSession, EventDraftLoose, type HubToDaemon } from "@pager/protocol";
+import { DaemonHello, DaemonPatch, DaemonSession, EventDraftLoose, type EventLoose, type HubToDaemon } from "@pager/protocol";
 import type { Env } from "./env.js";
 
 interface MachineInfoStored {
@@ -33,7 +33,14 @@ export class MachineDO extends DurableObject<Env> {
     }
 
     if (url.pathname === "/deliver" && req.method === "POST") {
-      const msg = (await req.json()) as HubToDaemon;
+      const body = (await req.json()) as HubToDaemon & { botUsername?: string; ownerId?: string; conv?: string };
+      // agent bot 的 task 记下 conv→{botUsername,ownerId}，回来的事件据此盖身份；不把这两字段发给 daemon。
+      if (body.kind === "task" && body.botUsername && body.conv) {
+        const map = (await this.ctx.storage.get<Record<string, { botUsername: string; ownerId: string }>>("convBots")) ?? {};
+        map[body.conv] = { botUsername: body.botUsername, ownerId: body.ownerId ?? "" };
+        await this.ctx.storage.put("convBots", map);
+      }
+      const { botUsername: _bu, ownerId: _oi, ...msg } = body as Record<string, unknown>;
       const sockets = this.ctx.getWebSockets();
       let delivered = false;
       for (const ws of sockets) {
@@ -84,7 +91,15 @@ export class MachineDO extends DurableObject<Env> {
           break;
         }
         case "event": {
-          const event = EventDraftLoose.parse(msg.event);
+          const event = EventDraftLoose.parse(msg.event) as EventLoose & { role: string; body: Record<string, unknown> };
+          // 以 bot 身份 ingest：盖 role=agent + author=botUsername；权限请求再盖 owner_id 供 iOS 门控。
+          const map = (await this.ctx.storage.get<Record<string, { botUsername: string; ownerId: string }>>("convBots")) ?? {};
+          const bot = map[event.conv];
+          if (bot) {
+            event.role = "agent";
+            event.body = { ...(event.body ?? {}), author: bot.botUsername };
+            if (event.type === "permission_request") event.body.owner_id = bot.ownerId;
+          }
           await this.conv(event.conv).fetch("https://do/ingest", {
             method: "POST",
             body: JSON.stringify({ event }),
