@@ -126,6 +126,35 @@ describe("router：群与拉人", () => {
     expect(bots.map((b: any) => b.username).sort()).toEqual(["chatgpt", "claude"]);
   });
 
+  it("daemon token 错→401；GET /api/machines 列在线机器", async () => {
+    expect((await SELF.fetch("https://hub/ws/daemon?machine=mch_x", { headers: { Authorization: "Bearer wrong" } })).status).toBe(401);
+    // 假 daemon 上线 → 注册表
+    const dres = await SELF.fetch("https://hub/ws/daemon?machine=mch_reglist", { headers: { Upgrade: "websocket", Authorization: "Bearer test-daemon-token" } });
+    const dws = dres.webSocket!; dws.accept();
+    dws.send(JSON.stringify({ kind: "hello", proto: 1, machine: { id: "mch_reglist", name: "RegMac" }, dirs: ["/srv"], maxConcurrent: 1 }));
+    const a = await register("r_mach_a");
+    const list = await until(async () => {
+      const ms = await (await api("/api/machines", { token: a.token })).json<any[]>();
+      return ms.find((m: any) => m.id === "mch_reglist" && m.online) ? ms : null;
+    });
+    expect(list.find((m: any) => m.id === "mch_reglist").dirs).toEqual(["/srv"]);
+    dws.close();
+  });
+
+  it("permission-response：非主人 403", async () => {
+    // 造一个带 owner_id 的权限请求进某会话
+    const owner = await register("r_perm_owner");
+    const other = await register("r_perm_other");
+    const g = await (await api("/api/groups", { token: owner.token, body: { title: "工作组", members: [other.userId] } })).json<any>();
+    const conv = env.CONVERSATION.get(env.CONVERSATION.idFromName(g.id));
+    await conv.fetch("https://do/ingest", {
+      method: "POST",
+      body: JSON.stringify({ event: { id: "evt_perm2", conv: g.id, ts: 1, role: "agent", agent: "claude-code", type: "permission_request", body: { request_id: "rq2", tool: "Bash", description: "x", options: ["allow", "deny"], owner_id: owner.userId, author: "wbot" } } }),
+    });
+    const res = await api("/api/permission-response", { token: other.token, body: { conv: g.id, request_id: "rq2", choice: "allow" } });
+    expect(res.status).toBe(403);
+  });
+
   it("建干活 bot（绑机器目录）→ /api/bots 含它(backend=agent)", async () => {
     const a = await register("r_agent_a");
     const made = await api("/api/bots", { token: a.token, body: { name: "mybot" + Math.floor(Math.random() * 9999), machineId: "mch_x", dir: "/tmp" } });

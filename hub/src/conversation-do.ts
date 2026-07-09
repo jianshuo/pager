@@ -60,6 +60,7 @@ export class ConversationDO extends DurableObject<Env> {
         return this.removeMember(decodeURIComponent(url.pathname.slice("/members/".length)));
       if (key === "GET /events") return this.events(Number(url.searchParams.get("after") ?? "0"));
       if (key === "GET /meta") return Response.json((await this.ctx.storage.get<ConvMeta>("meta")) ?? null);
+      if (key === "GET /perm") return this.permInfo(url.searchParams.get("request_id") ?? "");
       return new Response("not found", { status: 404 });
     } catch (err) {
       if (err instanceof ZodError) return Response.json({ error: err.issues }, { status: 400 });
@@ -259,6 +260,17 @@ export class ConversationDO extends DurableObject<Env> {
   private events(after: number): Response {
     const rows = [...this.sql.exec("SELECT json FROM events WHERE seq > ? ORDER BY seq", after)];
     return Response.json(rows.map((r) => JSON.parse(r.json as string)));
+  }
+
+  // 找 request_id 对应权限请求的 owner + bot 名（供 permission-response 校验主人 + 找机器）。
+  private permInfo(requestId: string): Response {
+    for (const r of this.sql.exec("SELECT json FROM events")) {
+      const e = JSON.parse(r.json as string);
+      if (e.type === "permission_request" && e.body?.request_id === requestId) {
+        return Response.json({ ownerId: e.body.owner_id ?? "", botUsername: e.body.author ?? "" });
+      }
+    }
+    return Response.json(null);
   }
 
   private async fanout(notify: NotifyBody): Promise<void> {

@@ -200,6 +200,12 @@ export default {
         if (req.method === "DELETE" && memberMatch[2]) return await leaveConversation(env, me, conv);
       }
 
+      if (path === "/api/machines" && req.method === "GET")
+        return env.MACHINEREG.get(env.MACHINEREG.idFromName("registry")).fetch("https://do/machines");
+
+      if (path === "/api/permission-response" && req.method === "POST")
+        return await permissionResponse(env, me, await req.json());
+
       if (path === "/api/register-device" && req.method === "POST")
         return userStub(env, me.userId).fetch("https://do/register-device", {
           method: "POST",
@@ -216,6 +222,49 @@ export default {
 
 function nowSec(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+// 权限响应：只有干活 bot 的主人能批。查权限的 owner_id 校验 me，ingest 回执 + 转给机器 daemon。
+async function permissionResponse(
+  env: Env,
+  me: Identity,
+  raw: unknown
+): Promise<Response> {
+  const body = raw as { conv?: string; request_id?: string; choice?: string };
+  if (!body.conv || !body.request_id || !body.choice) return Response.json({ error: "参数不全" }, { status: 400 });
+  const perm = await (
+    await convStub(env, body.conv).fetch(`https://do/perm?request_id=${encodeURIComponent(body.request_id)}`)
+  ).json<{ ownerId: string; botUsername: string } | null>();
+  if (!perm) return Response.json({ error: "找不到该权限请求" }, { status: 404 });
+  if (perm.ownerId !== me.userId) return Response.json({ error: "只有 bot 主人能批准" }, { status: 403 });
+
+  // 找 bot 的机器
+  const who = await (
+    await directory(env).fetch("https://do/lookup", { method: "POST", body: JSON.stringify({ username: perm.botUsername }) })
+  ).json<{ userId: string } | null>();
+  const d = who
+    ? await (await directory(env).fetch(`https://do/bot?userId=${who.userId}`)).json<{ machineId?: string } | null>()
+    : null;
+  if (!d?.machineId) return Response.json({ error: "bot 机器未知" }, { status: 404 });
+
+  const event = {
+    id: newId("evt"),
+    conv: body.conv,
+    ts: nowSec(),
+    role: "user",
+    agent: "claude-code",
+    type: "permission_response",
+    body: { request_id: body.request_id, choice: body.choice, author: me.username },
+  };
+  // ingest 回执（大家看到已批）
+  await convStub(env, body.conv).fetch("https://do/ingest", { method: "POST", body: JSON.stringify({ event }) });
+  // 转给 daemon 继续跑
+  const del = await env.MACHINE.get(env.MACHINE.idFromName(d.machineId)).fetch("https://do/deliver", {
+    method: "POST",
+    body: JSON.stringify({ kind: "user_event", conv: body.conv, event }),
+  });
+  const { delivered } = await del.json<{ delivered: boolean }>();
+  return Response.json({ ok: true, delivered });
 }
 
 async function addFriend(env: Env, me: Identity, body: { userId: string }): Promise<Response> {
