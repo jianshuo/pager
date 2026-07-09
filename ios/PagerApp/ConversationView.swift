@@ -119,7 +119,14 @@ struct ConversationView: View {
         let text = trimmedDraft
         guard !text.isEmpty else { return }
         model.sendText(conv: conv, markdown: text)
+        // iOS 听写(dictation)会在发送后把识别文本异步回写到输入框，导致普通 draft="" 清不掉
+        // （键盘打字无此回写，所以能清）。先结束编辑逼听写落定+结束会话，清空，下一拍恢复聚焦保持键盘。
+        composerFocused = false
         draft = ""
+        DispatchQueue.main.async {
+            draft = ""
+            composerFocused = true
+        }
     }
 
     private func leave() {
