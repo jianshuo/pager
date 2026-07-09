@@ -2,7 +2,8 @@ export interface Env {
   CONVERSATION: DurableObjectNamespace;
   USER: DurableObjectNamespace;
   DIRECTORY: DurableObjectNamespace;
-  MACHINE: DurableObjectNamespace; // 过渡：Phase 4 路由重写后移除
+  MACHINE: DurableObjectNamespace; // 干活 bot 的机器 daemon（B 期）
+  MACHINEREG: DurableObjectNamespace; // 在线机器登记表（B 期）
   DAEMON_TOKEN: string;
   CLIENT_TOKEN: string;
   // AI 成员后端：LLM API key（未配则 bot 回错误提示）；BOT_MOCK 存在时测试走固定回复。

@@ -3,6 +3,7 @@ import { ConversationDO } from "./conversation-do.js";
 import { MachineDO } from "./machine-do.js";
 import { UserDO } from "./user-do.js";
 import { DirectoryDO } from "./directory-do.js";
+import { MachineRegistryDO } from "./machine-registry-do.js";
 import {
   RegisterRequest,
   LoginRequest,
@@ -16,7 +17,7 @@ import {
 import { ZodError } from "zod";
 
 // MachineDO 仍绑定但不再路由（Pager 遗留，待后续 deleted_classes 迁移清理）
-export { ConversationDO, MachineDO, UserDO, DirectoryDO };
+export { ConversationDO, MachineDO, UserDO, DirectoryDO, MachineRegistryDO };
 
 function bearer(req: Request): string | null {
   const h = req.headers.get("Authorization") ?? "";

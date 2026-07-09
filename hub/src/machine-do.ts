@@ -126,14 +126,10 @@ export class MachineDO extends DurableObject<Env> {
   }
 
   private async notifyStatus(info: MachineInfoStored, online: boolean): Promise<void> {
-    await this.env.USER.get(this.env.USER.idFromName("user")).fetch("https://do/machine-status", {
+    // Mesh：上报到机器登记表（不再是废弃的 UserDO 单例）。建干活 bot 时列出可绑机器。
+    await this.env.MACHINEREG.get(this.env.MACHINEREG.idFromName("registry")).fetch("https://do/upsert", {
       method: "POST",
-      body: JSON.stringify({
-        machine: info.machine,
-        online,
-        dirs: info.dirs,
-        maxConcurrent: info.maxConcurrent,
-      }),
+      body: JSON.stringify({ id: info.machine.id, name: info.machine.name, dirs: info.dirs, online }),
     });
   }
 }

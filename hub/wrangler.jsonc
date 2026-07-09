@@ -10,14 +10,16 @@
   "workers_dev": true,
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ConversationDO", "MachineDO", "UserDO"] },
-    { "tag": "v2", "new_sqlite_classes": ["DirectoryDO"] }
+    { "tag": "v2", "new_sqlite_classes": ["DirectoryDO"] },
+    { "tag": "v3", "new_sqlite_classes": ["MachineRegistryDO"] }
   ],
   "durable_objects": {
     "bindings": [
       { "name": "CONVERSATION", "class_name": "ConversationDO" },
       { "name": "MACHINE", "class_name": "MachineDO" },
       { "name": "USER", "class_name": "UserDO" },
-      { "name": "DIRECTORY", "class_name": "DirectoryDO" }
+      { "name": "DIRECTORY", "class_name": "DirectoryDO" },
+      { "name": "MACHINEREG", "class_name": "MachineRegistryDO" }
     ]
   }
 }
