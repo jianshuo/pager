@@ -4,6 +4,10 @@
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // workers.dev 在中国大陆被墙 → 挂 jianshuo.dev 自定义域，国内可达性好得多。
+  // 同时保留 workers.dev（老 TestFlight 包仍指它），两个域名都通。
+  "routes": [{ "pattern": "mesh-api.jianshuo.dev", "custom_domain": true }],
+  "workers_dev": true,
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ConversationDO", "MachineDO", "UserDO"] },
     { "tag": "v2", "new_sqlite_classes": ["DirectoryDO"] }

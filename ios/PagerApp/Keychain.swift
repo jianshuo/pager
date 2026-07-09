@@ -4,7 +4,8 @@ import Security
 /// Stores the Mesh session credentials: the session token (Keychain), plus the logged-in
 /// userId/username and hub URL (UserDefaults — not secret). Cleared on logout.
 enum Keychain {
-    static let defaultHubURL = "https://pager-hub.jianshuo.workers.dev"
+    // 自定义域（jianshuo.dev），中国大陆可达性远好于被墙的 *.workers.dev。
+    static let defaultHubURL = "https://mesh-api.jianshuo.dev"
 
     private static let service = "dev.mesh"
     private static let sessionAccount = "sessionToken"

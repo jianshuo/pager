@@ -23,6 +23,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     }
 
     private func requestAuthorization() {
+        #if DEBUG
+        // 截图/演示时跳过推送授权弹窗（保持画面干净）。生产无此变量即正常请求。
+        if ProcessInfo.processInfo.environment["MESH_DEBUG_NO_PUSH"] != nil { return }
+        #endif
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error { print("[AppDelegate] requestAuthorization error: \(error)") }
             guard granted else { return }
