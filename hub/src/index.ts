@@ -46,12 +46,12 @@ async function resolveSession(env: Env, token: string | null): Promise<Identity 
   return who;
 }
 
-// 批量把 userId 解析成 username（未知 id 被跳过）
-async function resolveNames(env: Env, ids: string[]): Promise<Map<string, string>> {
+// 批量把 userId 解析成 {username, isBot}（未知 id 被跳过）。isBot 用于把 bot 标进会话成员。
+async function resolveNames(env: Env, ids: string[]): Promise<Map<string, { username: string; isBot: boolean }>> {
   const rows = await (
     await directory(env).fetch("https://do/names", { method: "POST", body: JSON.stringify({ userIds: ids }) })
-  ).json<{ userId: string; username: string }[]>();
-  return new Map(rows.map((r) => [r.userId, r.username]));
+  ).json<{ userId: string; username: string; kind: string }[]>();
+  return new Map(rows.map((r) => [r.userId, { username: r.username, isBot: r.kind === "bot" }]));
 }
 
 async function jsonBody<T>(req: Request): Promise<T> {
@@ -150,6 +150,9 @@ export default {
       if (path === "/api/users" && req.method === "GET")
         return directory(env).fetch(`https://do/search?q=${encodeURIComponent(url.searchParams.get("q") ?? "")}`);
 
+      if (path === "/api/bots" && req.method === "GET")
+        return directory(env).fetch("https://do/bots");
+
       if (path === "/api/friends" && req.method === "GET")
         return userStub(env, me.userId).fetch("https://do/friends");
 
@@ -198,22 +201,20 @@ function nowSec(): number {
 }
 
 async function addFriend(env: Env, me: Identity, body: { userId: string }): Promise<Response> {
-  const names = await resolveNames(env, [body.userId]);
-  const username = names.get(body.userId);
-  if (!username) return Response.json({ error: "查无此人" }, { status: 404 });
+  const info = (await resolveNames(env, [body.userId])).get(body.userId);
+  if (!info) return Response.json({ error: "查无此人" }, { status: 404 });
   await userStub(env, me.userId).fetch("https://do/friends", {
     method: "POST",
-    body: JSON.stringify({ userId: body.userId, username }),
+    body: JSON.stringify({ userId: body.userId, username: info.username }),
   });
-  return Response.json({ ok: true, userId: body.userId, username });
+  return Response.json({ ok: true, userId: body.userId, username: info.username });
 }
 
 // 1:1：确定性 conv id，双方任一发起都命中同一会话；双方索引各登记一条。
 async function directConversation(env: Env, me: Identity, body: { userId: string }): Promise<Response> {
   if (body.userId === me.userId) return Response.json({ error: "不能和自己聊" }, { status: 400 });
-  const names = await resolveNames(env, [body.userId]);
-  const peerName = names.get(body.userId);
-  if (!peerName) return Response.json({ error: "查无此人" }, { status: 404 });
+  const peer = (await resolveNames(env, [body.userId])).get(body.userId);
+  if (!peer) return Response.json({ error: "查无此人" }, { status: 404 });
 
   const [a, b] = [me.userId, body.userId].sort();
   const conv = `dm_${a}_${b}`;
@@ -224,12 +225,12 @@ async function directConversation(env: Env, me: Identity, body: { userId: string
       title: "",
       createdBy: me.userId,
       members: [
-        { userId: me.userId, username: me.username },
-        { userId: body.userId, username: peerName },
+        { userId: me.userId, username: me.username, isBot: false },
+        { userId: body.userId, username: peer.username, isBot: peer.isBot },
       ],
     }),
   });
-  await indexConv(env, me.userId, { conv, kind: "direct", peerUserId: body.userId, peerUsername: peerName });
+  await indexConv(env, me.userId, { conv, kind: "direct", peerUserId: body.userId, peerUsername: peer.username });
   await indexConv(env, body.userId, { conv, kind: "direct", peerUserId: me.userId, peerUsername: me.username });
   return Response.json({ id: conv }, { status: 201 });
 }
@@ -241,7 +242,11 @@ async function newGroup(env: Env, me: Identity, body: { title: string; members: 
   // 根因防御：只保留能在目录里解析出用户名的成员（永远含创建者自己）。
   // 否则一个已删除/重注册导致的「幽灵 userId」会被拉进群，真人却进不来（见 mira/jianshuo 事故）。
   const ids = requested.filter((id) => id === me.userId || names.has(id));
-  const members = ids.map((id) => ({ userId: id, username: id === me.userId ? me.username : names.get(id)! }));
+  const members = ids.map((id) =>
+    id === me.userId
+      ? { userId: id, username: me.username, isBot: false }
+      : { userId: id, username: names.get(id)!.username, isBot: names.get(id)!.isBot }
+  );
   await convStub(env, conv).fetch("https://do/init", {
     method: "POST",
     body: JSON.stringify({ kind: "group", title: body.title, createdBy: me.userId, members }),
@@ -254,15 +259,14 @@ async function newGroup(env: Env, me: Identity, body: { title: string; members: 
 async function addMember(env: Env, me: Identity, conv: string, body: { userId: string }): Promise<Response> {
   const meta = await (await convStub(env, conv).fetch("https://do/meta")).json<{ kind: string; title: string } | null>();
   if (!meta) return Response.json({ error: "会话不存在" }, { status: 404 });
-  const names = await resolveNames(env, [body.userId]);
-  const username = names.get(body.userId);
-  if (!username) return Response.json({ error: "查无此人" }, { status: 404 });
+  const info = (await resolveNames(env, [body.userId])).get(body.userId);
+  if (!info) return Response.json({ error: "查无此人" }, { status: 404 });
   await convStub(env, conv).fetch("https://do/members", {
     method: "POST",
-    body: JSON.stringify({ userId: body.userId, username }),
+    body: JSON.stringify({ userId: body.userId, username: info.username, isBot: info.isBot }),
   });
   await indexConv(env, body.userId, { conv, kind: meta.kind, title: meta.title });
-  await ingestSystem(env, conv, `${username} 进群`);
+  await ingestSystem(env, conv, `${info.username} 进群`);
   return Response.json({ ok: true });
 }
 

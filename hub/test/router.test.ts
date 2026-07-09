@@ -120,6 +120,33 @@ describe("router：群与拉人", () => {
     cw.ws.close();
   });
 
+  it("GET /api/bots 列出 Claude/ChatGPT", async () => {
+    const a = await register("r_bots_a");
+    const bots = await (await api("/api/bots", { token: a.token })).json<any[]>();
+    expect(bots.map((b: any) => b.username).sort()).toEqual(["chatgpt", "claude"]);
+  });
+
+  it("和 Claude 建直连→发消息→收到 bot 流式回复(mock)", async () => {
+    const a = await register("r_bots_b");
+    const dc = await (
+      await api("/api/conversations/direct", { token: a.token, body: { userId: "usr_bot_claude" } })
+    ).json<any>();
+    const w = await clientWs(a.token);
+    w.ws.send(JSON.stringify({ kind: "subscribe", conv: dc.id, afterSeq: 0 }));
+    w.ws.send(
+      JSON.stringify({
+        kind: "send",
+        conv: dc.id,
+        event: { id: "evt_b1", conv: dc.id, ts: 1, role: "user", agent: "claude-code", type: "text", body: { markdown: "讲个笑话", author: "r_bots_b" } },
+      })
+    );
+    const bot = await until(async () =>
+      w.got.find((g: any) => g.kind === "event" && g.event.role === "agent") || w.got.find((g: any) => g.kind === "patch")
+    );
+    expect(bot).toBeTruthy();
+    w.ws.close();
+  });
+
   // 回归：mira/jianshuo 事故——已删除/重注册留下的「幽灵 userId」不能被拉进群（否则真人进不来）
   it("建群时无法解析的幽灵成员被过滤，只留创建者+真实成员", async () => {
     const a = await register("r_ghost_a");
