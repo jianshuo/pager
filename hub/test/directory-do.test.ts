@@ -44,6 +44,21 @@ describe("DirectoryDO", () => {
     expect(await (await post("/resolve", { token })).json()).toBeNull();
   });
 
+  it("预置 Claude/ChatGPT + /bots 列出 + lookup kind=bot", async () => {
+    const bots = await (await dir().fetch("https://do/bots")).json<any[]>();
+    expect(bots.map((b) => b.username).sort()).toEqual(["chatgpt", "claude"]);
+    expect(bots.find((b) => b.username === "claude").userId).toBe("usr_bot_claude");
+    const who = await (await post("/lookup", { username: "claude" })).json<any>();
+    expect(who.kind).toBe("bot");
+    const d = await (await dir().fetch("https://do/bot?userId=usr_bot_claude")).json<any>();
+    expect(d.backend).toBe("claude");
+  });
+
+  it("保留名 claude/chatgpt 不许注册", async () => {
+    expect((await post("/register", { username: "claude", password: "hunter2" })).status).toBe(409);
+    expect((await post("/register", { username: "chatgpt", password: "hunter2" })).status).toBe(409);
+  });
+
   it("search：前缀命中", async () => {
     await post("/register", { username: "carol", password: "hunter2" });
     await post("/register", { username: "carla", password: "hunter2" });
