@@ -26,6 +26,22 @@ struct ContactsView: View {
                     }
                 }
             }
+            if trimmedQuery.isEmpty && !model.bots.isEmpty {
+                Section("助手") {
+                    ForEach(model.bots) { bot in
+                        Button { start(botUserId: bot.userId, name: bot.displayName) } label: {
+                            HStack(spacing: 11) {
+                                AIAvatar(size: 36)
+                                Text(bot.displayName).foregroundStyle(Theme.ink)
+                                Spacer()
+                                Image(systemName: "bubble.left").foregroundStyle(Theme.iconGreen)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(opening)
+                    }
+                }
+            }
             Section("我的好友") {
                 if model.friends.isEmpty {
                     Text("还没有好友。上面搜个用户名加一下。").foregroundStyle(Theme.textSecondary)
@@ -49,7 +65,7 @@ struct ContactsView: View {
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
         .onChange(of: query) { _, _ in scheduleSearch() }
-        .task { await model.refreshFriends() }
+        .task { await model.refreshBots(); await model.refreshFriends() }
     }
 
     private var trimmedQuery: String { query.trimmingCharacters(in: .whitespaces).lowercased() }
@@ -97,12 +113,16 @@ struct ContactsView: View {
     }
 
     private func start(with friend: UserSummary) {
+        start(botUserId: friend.userId, name: friend.username)
+    }
+
+    private func start(botUserId: String, name: String) {
         guard !opening else { return }
         opening = true
         Task {
             defer { opening = false }
-            if let conv = await model.openDirect(userId: friend.userId) {
-                onStartChat(conv, friend.username)
+            if let conv = await model.openDirect(userId: botUserId) {
+                onStartChat(conv, name)
             }
         }
     }

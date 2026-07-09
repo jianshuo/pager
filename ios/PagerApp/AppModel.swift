@@ -13,6 +13,9 @@ final class AppModel {
     /// My friends (single-direction contacts), REST-refreshed.
     private(set) var friends: [UserSummary] = []
 
+    /// Built-in AI bots (Claude / ChatGPT), REST-refreshed. Shown in Contacts + group add-member.
+    private(set) var bots: [BotSummary] = []
+
     /// Home list, REST-refreshed.
     private(set) var conversations: [ConversationSummary] = []
 
@@ -183,6 +186,11 @@ final class AppModel {
     func refreshFriends() async {
         guard let result = try? await api.friends() else { return }
         friends = result
+    }
+
+    func refreshBots() async {
+        guard let result = try? await api.bots() else { return }
+        bots = result
     }
 
     // MARK: - Conversations (REST)

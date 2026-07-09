@@ -18,6 +18,7 @@ struct ConversationView: View {
         VStack(spacing: 0) {
             transcript
             Divider().overlay(Theme.creamBorder)
+            if isGroup && !model.bots.isEmpty { mentionBar }
             composer
         }
         .background(Theme.chatBG.ignoresSafeArea())
@@ -44,6 +45,7 @@ struct ConversationView: View {
         }
         .onAppear { model.openConversation(conv) }
         .onDisappear { model.closeConversation(conv) }
+        .task { if isGroup { await model.refreshBots() } }
     }
 
     private var isGroup: Bool {
@@ -115,6 +117,36 @@ struct ConversationView: View {
 
     private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    // 群里 @bot 快捷条：点一下插入 @<username>，被 @ 的 bot 成员才会回话。
+    private var mentionBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(model.bots) { bot in
+                    Button { insertMention(bot.username) } label: {
+                        Text("@\(bot.displayName)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.deepGreen)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Theme.statusPillBG)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+        }
+        .background(Theme.barBG)
+    }
+
+    private func insertMention(_ username: String) {
+        if draft.contains("@\(username)") { composerFocused = true; return }
+        let sep = draft.isEmpty || draft.hasSuffix(" ") ? "" : " "
+        draft += "\(sep)@\(username) "
+        composerFocused = true
+    }
+
     private func send() {
         let text = trimmedDraft
         guard !text.isEmpty else { return }
@@ -146,24 +178,40 @@ private struct AddMemberSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if model.friends.isEmpty {
-                    Text("你还没有好友。").foregroundStyle(Theme.textSecondary)
-                }
-                ForEach(model.friends) { friend in
-                    Button {
-                        Task {
-                            await model.addMember(conv: conv, userId: friend.userId)
-                            dismiss()
-                        }
-                    } label: {
-                        HStack(spacing: 11) {
-                            HumanAvatar(name: friend.username, size: 32)
-                            Text(friend.username).foregroundStyle(Theme.ink)
-                            Spacer()
-                            Image(systemName: "plus.circle").foregroundStyle(Theme.iconGreen)
+                if !model.bots.isEmpty {
+                    Section("助手") {
+                        ForEach(model.bots) { bot in
+                            Button {
+                                Task { await model.addMember(conv: conv, userId: bot.userId); dismiss() }
+                            } label: {
+                                HStack(spacing: 11) {
+                                    AIAvatar(size: 32)
+                                    Text(bot.displayName).foregroundStyle(Theme.ink)
+                                    Spacer()
+                                    Image(systemName: "plus.circle").foregroundStyle(Theme.iconGreen)
+                                }
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .buttonStyle(.plain)
+                }
+                Section("好友") {
+                    if model.friends.isEmpty {
+                        Text("你还没有好友。").foregroundStyle(Theme.textSecondary)
+                    }
+                    ForEach(model.friends) { friend in
+                        Button {
+                            Task { await model.addMember(conv: conv, userId: friend.userId); dismiss() }
+                        } label: {
+                            HStack(spacing: 11) {
+                                HumanAvatar(name: friend.username, size: 32)
+                                Text(friend.username).foregroundStyle(Theme.ink)
+                                Spacer()
+                                Image(systemName: "plus.circle").foregroundStyle(Theme.iconGreen)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
             .listStyle(.insetGrouped)
@@ -172,7 +220,7 @@ private struct AddMemberSheet: View {
             .navigationTitle("拉人进群")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } } }
-            .task { await model.refreshFriends() }
+            .task { await model.refreshBots(); await model.refreshFriends() }
         }
     }
 }

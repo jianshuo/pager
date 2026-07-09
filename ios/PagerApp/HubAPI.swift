@@ -61,6 +61,10 @@ struct HubAPI: Sendable {
 
     // MARK: - Friends
 
+    func bots() async throws -> [BotSummary] {
+        try await decode([BotSummary].self, path: "/api/bots")
+    }
+
     func searchUsers(query: String) async throws -> [UserSummary] {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return try await decode([UserSummary].self, path: "/api/users?q=\(q)")

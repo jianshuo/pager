@@ -112,6 +112,15 @@ struct UserSummary: Decodable, Identifiable, Hashable {
     var id: String { userId }
 }
 
+/// A built-in AI bot member (Claude / ChatGPT). DM it or add it to a group and @mention it.
+struct BotSummary: Decodable, Identifiable, Hashable {
+    let userId: String
+    let username: String
+    let backend: String     // "claude" | "chatgpt" | "agent"
+    let displayName: String
+    var id: String { userId }
+}
+
 /// A conversation in the home list. 1:1 shows the peer's username; a group shows its title.
 struct ConversationSummary: Decodable, Identifiable {
     let id: String
