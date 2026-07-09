@@ -126,6 +126,21 @@ describe("router：群与拉人", () => {
     expect(bots.map((b: any) => b.username).sort()).toEqual(["chatgpt", "claude"]);
   });
 
+  it("建干活 bot（绑机器目录）→ /api/bots 含它(backend=agent)", async () => {
+    const a = await register("r_agent_a");
+    const made = await api("/api/bots", { token: a.token, body: { name: "mybot" + Math.floor(Math.random() * 9999), machineId: "mch_x", dir: "/tmp" } });
+    expect(made.status).toBe(200);
+    const { userId } = await made.json<any>();
+    const bots = await (await api("/api/bots", { token: a.token })).json<any[]>();
+    const mine = bots.find((b: any) => b.userId === userId);
+    expect(mine.backend).toBe("agent");
+    // 另一个人看不到我的 agent bot（只看到内置）
+    const b = await register("r_agent_b");
+    const bBots = await (await api("/api/bots", { token: b.token })).json<any[]>();
+    expect(bBots.find((x: any) => x.userId === userId)).toBeUndefined();
+    expect(bBots.map((x: any) => x.username).sort()).toEqual(["chatgpt", "claude"]);
+  });
+
   it("和 Claude 建直连→发消息→收到 bot 流式回复(mock)", async () => {
     const a = await register("r_bots_b");
     const dc = await (

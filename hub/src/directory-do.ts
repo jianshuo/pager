@@ -82,9 +82,11 @@ export class DirectoryDO extends DurableObject<Env> {
       case "POST /lookup":
         return this.lookup(await req.json());
       case "GET /bots":
-        return this.listBots();
+        return this.listBots(url.searchParams.get("owner") ?? "");
       case "GET /bot":
         return this.getBot(url.searchParams.get("userId") ?? "");
+      case "POST /create-bot":
+        return this.createBot(await req.json());
       case "POST /mint": {
         const { userId } = await req.json<{ userId: string }>();
         const exists = [...this.sql.exec("SELECT 1 FROM users WHERE user_id = ?", userId)][0];
@@ -159,17 +161,45 @@ export class DirectoryDO extends DurableObject<Env> {
     return Response.json(out);
   }
 
-  // 内置聊天 bot 列表（Claude/ChatGPT）
-  private listBots(): Response {
+  // bot 列表：内置聊天 bot（Claude/ChatGPT）+ 指定 owner 自建的干活 bot(agent)。
+  private listBots(owner: string): Response {
     const disp: Record<string, string> = { claude: "Claude", chatgpt: "ChatGPT" };
     const rows = [
       ...this.sql.exec(
-        "SELECT u.user_id AS user_id, u.username AS username, b.backend AS backend FROM bots b JOIN users u ON u.user_id = b.user_id WHERE b.backend IN ('claude','chatgpt') ORDER BY u.username"
+        `SELECT u.user_id AS user_id, u.username AS username, b.backend AS backend
+         FROM bots b JOIN users u ON u.user_id = b.user_id
+         WHERE b.backend IN ('claude','chatgpt') OR b.owner_id = ?
+         ORDER BY u.username`,
+        owner
       ),
     ];
     return Response.json(
-      rows.map((r) => ({ userId: r.user_id, username: r.username, backend: r.backend, displayName: disp[r.backend as string] ?? r.username }))
+      rows.map((r) => ({
+        userId: r.user_id,
+        username: r.username,
+        backend: r.backend,
+        displayName: disp[r.backend as string] ?? (r.username as string),
+      }))
     );
+  }
+
+  // 创建干活 bot（backend=agent，绑机器+目录，归 ownerId）。name 由 Worker 归一化过。
+  private createBot(body: { name: string; ownerId: string; machineId: string; dir: string }): Response {
+    const name = (body.name ?? "").trim().toLowerCase();
+    if (DirectoryDO.RESERVED.includes(name)) return Response.json({ error: "用户名被保留" }, { status: 409 });
+    if ([...this.sql.exec("SELECT 1 FROM users WHERE username = ?", name)][0])
+      return Response.json({ error: "用户名已被占用" }, { status: 409 });
+    const userId = `usr_${crypto.randomUUID()}`;
+    const now = nowSec();
+    this.sql.exec("INSERT INTO users (user_id, username, pw_hash, created_at, kind) VALUES (?, ?, '', ?, 'bot')", userId, name, now);
+    this.sql.exec(
+      "INSERT INTO bots (user_id, backend, model, owner_id, machine_id, dir) VALUES (?, 'agent', '', ?, ?, ?)",
+      userId,
+      body.ownerId,
+      body.machineId,
+      body.dir
+    );
+    return Response.json({ userId, username: name });
   }
 
   // 单个 bot 的后端描述符（ConversationDO 派发时用）

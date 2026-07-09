@@ -11,6 +11,7 @@ import {
   DirectConversationRequest,
   NewGroupRequest,
   AddMemberRequest,
+  NewBotRequest,
   DeviceRegistration,
   newId,
 } from "@pager/protocol";
@@ -152,7 +153,15 @@ export default {
         return directory(env).fetch(`https://do/search?q=${encodeURIComponent(url.searchParams.get("q") ?? "")}`);
 
       if (path === "/api/bots" && req.method === "GET")
-        return directory(env).fetch("https://do/bots");
+        return directory(env).fetch(`https://do/bots?owner=${encodeURIComponent(me.userId)}`);
+
+      if (path === "/api/bots" && req.method === "POST") {
+        const b = NewBotRequest.parse(await req.json());
+        return directory(env).fetch("https://do/create-bot", {
+          method: "POST",
+          body: JSON.stringify({ name: b.name, ownerId: me.userId, machineId: b.machineId, dir: b.dir }),
+        });
+      }
 
       if (path === "/api/friends" && req.method === "GET")
         return userStub(env, me.userId).fetch("https://do/friends");
