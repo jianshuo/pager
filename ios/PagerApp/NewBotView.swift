@@ -85,10 +85,10 @@ struct NewBotView: View {
         error = nil
         Task {
             defer { creating = false }
-            if await model.createBot(name: trimmedName, machineId: machineId, dir: dir) {
-                dismiss()
+            if let msg = await model.createBot(name: trimmedName, machineId: machineId, dir: dir) {
+                error = msg
             } else {
-                error = "创建失败（用户名可能已被占用）"
+                dismiss()
             }
         }
     }

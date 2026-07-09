@@ -201,14 +201,24 @@ final class AppModel {
         machines = result
     }
 
-    /// Creates an agent bot bound to a machine + dir; refreshes the bot list. Returns success.
-    func createBot(name: String, machineId: String, dir: String) async -> Bool {
+    /// Creates an agent bot bound to a machine + dir; refreshes the bot list.
+    /// Returns nil on success, or a human-readable error message on failure.
+    func createBot(name: String, machineId: String, dir: String) async -> String? {
         do {
             _ = try await api.createBot(name: name, machineId: machineId, dir: dir)
             await refreshBots()
-            return true
+            return nil
+        } catch let e as HubError {
+            switch e {
+            case .conflict: return "用户名已被占用，换一个"
+            case .badRequest(let m): return "参数不对：\(m)"
+            case .unauthorized: return "登录失效，重新登录试试"
+            case .notConfigured: return "还没登录"
+            case .notFound(let m): return m
+            case .http(let c, let m): return "出错了（\(c)）\(m)"
+            }
         } catch {
-            return false
+            return "网络错误：\(error.localizedDescription)"
         }
     }
 
