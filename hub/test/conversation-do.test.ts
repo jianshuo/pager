@@ -86,6 +86,51 @@ describe("ConversationDO 成员制扇出", () => {
     expect((await convRow(A, c)).lastMessage).toBe("carol 进群");
   });
 
+  it("私信 bot：人类发消息触发 bot 以 agent 身份流式回话（mock）", async () => {
+    const [A, c] = ["usr_h1", "dm_bot_h1"];
+    await post(user(A), "/index-conv", { conv: c, kind: "direct" });
+    await post(user("usr_bot_claude"), "/index-conv", { conv: c, kind: "direct" });
+    await post(conv(c), "/init", {
+      kind: "direct",
+      createdBy: A,
+      members: [
+        { userId: A, username: "h1", isBot: false },
+        { userId: "usr_bot_claude", username: "claude", isBot: true },
+      ],
+    });
+    await post(conv(c), "/ingest", { event: textDraft("evt_h1", c, "讲个笑话"), senderUsername: "h1", senderUserId: A });
+    const { until } = await import("./util.js");
+    const ev = await until(async () => {
+      const list = await (await conv(c).fetch("https://do/events?after=0")).json<any[]>();
+      return list.find((e) => e.role === "agent" && e.body.author === "claude" && (e.body.markdown || "").includes("讲个笑话"));
+    });
+    expect(ev).toBeTruthy();
+  });
+
+  it("群里不@bot 不触发；@了才触发", async () => {
+    const { until } = await import("./util.js");
+    const [A, c] = ["usr_h2", "cnv_g_bot"];
+    for (const u of [A, "usr_bot_claude"]) await post(user(u), "/index-conv", { conv: c, kind: "group", title: "g" });
+    await post(conv(c), "/init", {
+      kind: "group",
+      title: "g",
+      createdBy: A,
+      members: [
+        { userId: A, username: "h2", isBot: false },
+        { userId: "usr_bot_claude", username: "claude", isBot: true },
+      ],
+    });
+    await post(conv(c), "/ingest", { event: textDraft("evt_n", c, "大家好"), senderUsername: "h2", senderUserId: A });
+    await new Promise((r) => setTimeout(r, 300));
+    let list = await (await conv(c).fetch("https://do/events?after=0")).json<any[]>();
+    expect(list.some((e) => e.role === "agent")).toBe(false);
+    await post(conv(c), "/ingest", { event: textDraft("evt_m", c, "@claude 在吗"), senderUsername: "h2", senderUserId: A });
+    const hit = await until(async () =>
+      (await (await conv(c).fetch("https://do/events?after=0")).json<any[]>()).find((e) => e.role === "agent")
+    );
+    expect(hit).toBeTruthy();
+  });
+
   it("init 幂等：二次 init 不覆盖已有会话，只补成员", async () => {
     const [A, B, c] = ["usr_A4", "usr_B4", "dm_usr_A4_usr_B4"];
     await post(conv(c), "/init", { kind: "direct", title: "", createdBy: A, members: [{ userId: A, username: "alice" }] });

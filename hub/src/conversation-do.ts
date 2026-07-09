@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { EventDraftLoose, type EventLoose } from "@pager/protocol";
 import { ZodError } from "zod";
 import type { Env } from "./env.js";
+import { streamBotReply, type ChatMsg } from "./responder.js";
 
 // 一条会话（1:1 或群）：成员名单 + 消息流。发消息时按成员扇出到各自的 UserDO。
 export interface ConvMeta {
@@ -13,6 +14,7 @@ export interface ConvMeta {
 export interface Member {
   userId: string;
   username: string;
+  isBot?: boolean;
 }
 
 // 会话 → 每个成员 UserDO 的投递体。UserDO 据此更新会话索引、推送在线设备/APNs。
@@ -41,6 +43,8 @@ export class ConversationDO extends DurableObject<Env> {
         joined_at INTEGER NOT NULL
       )`
     );
+    // AI 成员标记：is_bot=1 的成员被叫到时走 bot 派发（不推手机）。
+    try { this.sql.exec("ALTER TABLE members ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0"); } catch { /* 已存在 */ }
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -78,10 +82,11 @@ export class ConversationDO extends DurableObject<Env> {
     const now = nowSec();
     for (const m of body.members ?? []) {
       this.sql.exec(
-        "INSERT OR IGNORE INTO members (user_id, username, joined_at) VALUES (?, ?, ?)",
+        "INSERT OR IGNORE INTO members (user_id, username, joined_at, is_bot) VALUES (?, ?, ?, ?)",
         m.userId,
         m.username,
-        now
+        now,
+        m.isBot ? 1 : 0
       );
     }
     return Response.json((await this.ctx.storage.get<ConvMeta>("meta")) ?? null);
@@ -114,7 +119,81 @@ export class ConversationDO extends DurableObject<Env> {
       event,
       summary: { lastMessage: lastMessageOf(event), lastSeq: seq, updatedAt: event.ts },
     });
+
+    // 人类 text 消息 → bot 派发（异步，不阻塞 ingest）。bot 自己的消息 role=agent，不触发（防死循环）。
+    if (event.type === "text" && event.role === "user") {
+      this.ctx.waitUntil(this.dispatchBots(event));
+    }
     return Response.json(event);
+  }
+
+  // 找出本条消息"叫到"的 bot 成员：私信=唯一 bot；群=文本里 @<botUsername> 的 bot。逐个调后端回话。
+  private async dispatchBots(event: EventLoose): Promise<void> {
+    const meta = await this.ctx.storage.get<ConvMeta>("meta");
+    const text = ((event.body as Record<string, unknown>)?.markdown as string) ?? "";
+    const bots = [...this.sql.exec("SELECT user_id, username FROM members WHERE is_bot = 1")].map((r) => ({
+      userId: r.user_id as string,
+      username: r.username as string,
+    }));
+    const addressed =
+      meta?.kind === "direct"
+        ? bots
+        : bots.filter((b) => new RegExp(`@${escapeRe(b.username)}\\b`, "i").test(text));
+    for (const bot of addressed) {
+      const d = await (await this.dir().fetch(`https://do/bot?userId=${bot.userId}`)).json<{
+        backend: string;
+        model: string;
+      } | null>();
+      if (!d || (d.backend !== "claude" && d.backend !== "chatgpt")) continue; // A 期只处理聊天 bot
+      await this.hubRespond(event.conv, bot, d.backend, d.model);
+    }
+  }
+
+  // 以 bot 身份先 ingest 一条空 text（拿 id），再拉最近历史调 LLM 流式、用 patch 覆盖。
+  private async hubRespond(
+    conv: string,
+    bot: { userId: string; username: string },
+    backend: "claude" | "chatgpt",
+    model: string
+  ): Promise<void> {
+    const draft = {
+      id: `evt_${crypto.randomUUID()}`,
+      conv,
+      ts: nowSec(),
+      role: "agent",
+      agent: "claude-code",
+      type: "text",
+      body: { markdown: "", author: bot.username },
+    };
+    const sealed = await (await this.ingest({ event: draft })).json<{ id: string }>();
+
+    const history = [...this.sql.exec("SELECT json FROM events ORDER BY seq DESC LIMIT 31")]
+      .map((r) => JSON.parse(r.json as string))
+      .reverse()
+      .filter((e) => e.type === "text" && e.id !== sealed.id);
+    const messages: ChatMsg[] = history.map((e) => ({
+      role: e.role === "agent" && e.body?.author === bot.username ? "assistant" : "user",
+      content:
+        e.role === "agent"
+          ? (e.body?.markdown ?? "")
+          : `${e.body?.author ?? "用户"}: ${e.body?.markdown ?? ""}`,
+    }));
+    const system = `你是 ${bot.username}，Mesh 里的一个 AI 成员，正在和用户对话。简洁、直接、有帮助地回复。`;
+
+    let acc = "";
+    try {
+      for await (const delta of streamBotReply(this.env, backend, model, system, messages)) {
+        acc += delta;
+        await this.patch({ conv, eventId: sealed.id, markdown: acc });
+      }
+      if (!acc) await this.patch({ conv, eventId: sealed.id, markdown: "（无回复）" });
+    } catch {
+      await this.patch({ conv, eventId: sealed.id, markdown: `⚠️ ${bot.username} 出错了，稍后再试。` });
+    }
+  }
+
+  private dir(): DurableObjectStub {
+    return this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName("directory"));
   }
 
   private async patch(body: { conv: string; eventId: string; markdown: string }): Promise<Response> {
@@ -136,10 +215,11 @@ export class ConversationDO extends DurableObject<Env> {
   private async addMember(body: Member): Promise<Response> {
     const before = [...this.sql.exec("SELECT 1 FROM members WHERE user_id = ?", body.userId)][0];
     this.sql.exec(
-      "INSERT OR IGNORE INTO members (user_id, username, joined_at) VALUES (?, ?, ?)",
+      "INSERT OR IGNORE INTO members (user_id, username, joined_at, is_bot) VALUES (?, ?, ?, ?)",
       body.userId,
       body.username,
-      nowSec()
+      nowSec(),
+      body.isBot ? 1 : 0
     );
     return Response.json({ ok: true, added: !before });
   }
@@ -188,4 +268,8 @@ function lastMessageOf(e: EventLoose): string | null {
 
 function nowSec(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -11,6 +11,7 @@ export default defineWorkersConfig({
           bindings: {
             DAEMON_TOKEN: "test-daemon-token",
             CLIENT_TOKEN: "test-client-token",
+            BOT_MOCK: "1",
           },
         },
       },
