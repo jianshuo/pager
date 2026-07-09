@@ -22,12 +22,12 @@ struct EventRow: View {
             SystemLine(text: text)
         case .toolCard(let tool, let title, let summary, let detail, let diff):
             ToolCardView(tool: tool, title: title, summary: summary, detail: detail, diff: diff)
-        case .permissionRequest(let requestId, let tool, let description, let options):
+        case .permissionRequest(let requestId, let tool, let description, _, let ownerId):
             PermissionRequestCard(
                 requestId: requestId,
                 tool: tool,
                 description: description,
-                options: options,
+                ownerId: ownerId,
                 isAnswered: isAnswered,
                 answeredChoice: answeredChoice,
                 onPermission: onPermission
@@ -265,10 +265,14 @@ private struct PermissionRequestCard: View {
     let requestId: String
     let tool: String
     let description: String
-    let options: [String]
+    /// The bot owner's userId. Only the owner may approve/deny; others see a read-only card.
+    let ownerId: String?
     let isAnswered: Bool
     let answeredChoice: String?
     let onPermission: ((String, String) -> Void)?
+
+    /// True if the current user owns this bot (or no owner is set — legacy safety).
+    private var isOwner: Bool { ownerId == nil || ownerId == Keychain.userId }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
@@ -299,6 +303,14 @@ private struct PermissionRequestCard: View {
                         .font(.system(size: 12, weight: .medium))
                 }
                 .foregroundStyle(answeredChoice == "deny" ? Theme.denyBtnText : Theme.deepGreen)
+            } else if !isOwner {
+                // 不是 bot 主人：只读，看得到但点不了。
+                HStack(spacing: 5) {
+                    Image(systemName: "lock")
+                    Text("等待主人批准…")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.textTertiary)
             } else {
                 HStack(spacing: 10) {
                     Button {

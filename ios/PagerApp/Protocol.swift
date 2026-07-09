@@ -4,7 +4,7 @@ enum EventBody {
     case text(markdown: String, author: String?)
     case system(text: String)
     case toolCard(tool: String, title: String, summary: String, detail: String, diff: String?)
-    case permissionRequest(requestId: String, tool: String, description: String, options: [String])
+    case permissionRequest(requestId: String, tool: String, description: String, options: [String], ownerId: String?)
     case permissionResponse(requestId: String, choice: String)
     case status(state: String, note: String?)
     case error(message: String, recoverable: Bool)
@@ -38,7 +38,7 @@ struct Event: Decodable, Identifiable {
 
     enum BodyKeys: String, CodingKey {
         case markdown, author, text, tool, title, summary, detail, diff
-        case request_id, description, options, choice, state, note, message, recoverable
+        case request_id, description, options, choice, state, note, message, recoverable, owner_id
     }
 
     static func decodeBody(type: String, _ b: KeyedDecodingContainer<BodyKeys>,
@@ -61,7 +61,8 @@ struct Event: Decodable, Identifiable {
                 requestId: (try? b.decode(String.self, forKey: .request_id)) ?? "",
                 tool: (try? b.decode(String.self, forKey: .tool)) ?? "",
                 description: (try? b.decode(String.self, forKey: .description)) ?? "",
-                options: (try? b.decode([String].self, forKey: .options)) ?? [])
+                options: (try? b.decode([String].self, forKey: .options)) ?? [],
+                ownerId: try? b.decode(String.self, forKey: .owner_id))
         case "permission_response":
             return .permissionResponse(
                 requestId: (try? b.decode(String.self, forKey: .request_id)) ?? "",
@@ -110,6 +111,14 @@ struct UserSummary: Decodable, Identifiable, Hashable {
     let userId: String
     let username: String
     var id: String { userId }
+}
+
+/// An online machine a daemon is running on — bind an agent bot to one of these.
+struct MachineSummary: Decodable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let online: Bool
+    let dirs: [String]
 }
 
 /// A built-in AI bot member (Claude / ChatGPT). DM it or add it to a group and @mention it.

@@ -50,12 +50,21 @@ final class ProtocolTests: XCTestCase {
     func testPermissionRequestEventDecodesFields() throws {
         let json = #"{"id":"evt_3","conv":"cnv_1","seq":3,"ts":1751780002,"role":"agent","agent":"claude-code","type":"permission_request","body":{"request_id":"req_1","tool":"Bash","description":"run rm -rf","options":["allow","deny","allow_always"]}}"#
         let e = try decodeEvent(json)
-        guard case .permissionRequest(let requestId, let tool, _, let options) = e.body else {
+        guard case .permissionRequest(let requestId, let tool, _, let options, let ownerId) = e.body else {
             return XCTFail("expected .permissionRequest, got \(e.body)")
         }
         XCTAssertEqual(requestId, "req_1")
         XCTAssertEqual(tool, "Bash")
         XCTAssertEqual(options, ["allow", "deny", "allow_always"])
+        XCTAssertNil(ownerId)
+    }
+
+    func testPermissionRequestDecodesOwnerId() throws {
+        let json = #"{"id":"evt_o","conv":"cnv_1","seq":9,"ts":1,"role":"agent","agent":"claude-code","type":"permission_request","body":{"request_id":"r","tool":"Bash","description":"x","options":["allow","deny"],"owner_id":"usr_owner"}}"#
+        guard case .permissionRequest(_, _, _, _, let ownerId) = try decodeEvent(json).body else {
+            return XCTFail("expected .permissionRequest")
+        }
+        XCTAssertEqual(ownerId, "usr_owner")
     }
 
     func testStatusEventDecodesStateAndNilNote() throws {

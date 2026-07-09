@@ -65,6 +65,21 @@ struct HubAPI: Sendable {
         try await decode([BotSummary].self, path: "/api/bots")
     }
 
+    func machines() async throws -> [MachineSummary] {
+        try await decode([MachineSummary].self, path: "/api/machines")
+    }
+
+    /// Creates an agent bot bound to a machine + dir. Returns its userId.
+    func createBot(name: String, machineId: String, dir: String) async throws -> String {
+        try await decode(NewBotResult.self, path: "/api/bots", method: "POST",
+                         body: NewBotBody(name: name, machineId: machineId, dir: dir)).userId
+    }
+
+    func permissionResponse(conv: String, requestId: String, choice: String) async throws {
+        _ = try await raw(path: "/api/permission-response", method: "POST",
+                          body: PermBody(conv: conv, request_id: requestId, choice: choice))
+    }
+
     func searchUsers(query: String) async throws -> [UserSummary] {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         return try await decode([UserSummary].self, path: "/api/users?q=\(q)")
@@ -154,6 +169,9 @@ struct HubAPI: Sendable {
 }
 
 private struct Credentials: Encodable { let username: String; let password: String }
+private struct NewBotBody: Encodable { let name: String; let machineId: String; let dir: String }
+private struct NewBotResult: Decodable { let userId: String }
+private struct PermBody: Encodable { let conv: String; let request_id: String; let choice: String }
 private struct UserIdBody: Encodable { let userId: String }
 private struct NewGroupBody: Encodable { let title: String; let members: [String] }
 private struct DeviceBody: Encodable { let deviceToken: String }

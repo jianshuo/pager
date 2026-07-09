@@ -16,6 +16,9 @@ final class AppModel {
     /// Built-in AI bots (Claude / ChatGPT), REST-refreshed. Shown in Contacts + group add-member.
     private(set) var bots: [BotSummary] = []
 
+    /// Online machines a daemon runs on — bind an agent bot to one. REST-refreshed.
+    private(set) var machines: [MachineSummary] = []
+
     /// Home list, REST-refreshed.
     private(set) var conversations: [ConversationSummary] = []
 
@@ -191,6 +194,27 @@ final class AppModel {
     func refreshBots() async {
         guard let result = try? await api.bots() else { return }
         bots = result
+    }
+
+    func refreshMachines() async {
+        guard let result = try? await api.machines() else { return }
+        machines = result
+    }
+
+    /// Creates an agent bot bound to a machine + dir; refreshes the bot list. Returns success.
+    func createBot(name: String, machineId: String, dir: String) async -> Bool {
+        do {
+            _ = try await api.createBot(name: name, machineId: machineId, dir: dir)
+            await refreshBots()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Answers an agent bot's permission request (owner only, enforced server-side too).
+    func permissionRespond(conv: String, requestId: String, choice: String) async {
+        try? await api.permissionResponse(conv: conv, requestId: requestId, choice: choice)
     }
 
     // MARK: - Conversations (REST)

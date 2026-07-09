@@ -12,6 +12,7 @@ struct ContactsView: View {
     @State private var results: [UserSummary] = []
     @State private var searching = false
     @State private var opening = false
+    @State private var showNewBot = false
 
     var body: some View {
         List {
@@ -65,6 +66,14 @@ struct ContactsView: View {
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
         .onChange(of: query) { _, _ in scheduleSearch() }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showNewBot = true } label: { Image(systemName: "cpu") }
+                    .tint(Theme.iconGreen)
+                    .accessibilityLabel("新建干活 bot")
+            }
+        }
+        .sheet(isPresented: $showNewBot) { NewBotView() }
         .task { await model.refreshBots(); await model.refreshFriends() }
     }
 

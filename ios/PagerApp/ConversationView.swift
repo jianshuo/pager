@@ -12,6 +12,8 @@ struct ConversationView: View {
 
     @State private var draft = ""
     @State private var showAddMember = false
+    /// Permission request_ids answered locally this session (optimistic), mapped to the choice.
+    @State private var locallyAnswered: [String: String] = [:]
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -59,7 +61,12 @@ struct ConversationView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(events) { event in
-                        EventRow(event: event).id(event.id)
+                        EventRow(
+                            event: event,
+                            isAnswered: isAnswered(event),
+                            answeredChoice: answeredChoice(event),
+                            onPermission: handlePermission
+                        ).id(event.id)
                     }
                     Color.clear.frame(height: 1).id(bottomAnchor)
                 }
@@ -166,6 +173,26 @@ struct ConversationView: View {
             await model.leave(conv: conv)
             dismiss()
         }
+    }
+
+    // MARK: - Permission handling（干活 bot）
+
+    private func handlePermission(_ requestId: String, _ choice: String) {
+        locallyAnswered[requestId] = choice
+        Task { await model.permissionRespond(conv: conv, requestId: requestId, choice: choice) }
+    }
+
+    private func isAnswered(_ event: Event) -> Bool {
+        guard case .permissionRequest(let requestId, _, _, _, _) = event.body else { return false }
+        return answeredChoice(event) != nil || locallyAnswered[requestId] != nil
+    }
+
+    private func answeredChoice(_ event: Event) -> String? {
+        guard case .permissionRequest(let requestId, _, _, _, _) = event.body else { return nil }
+        for e in events {
+            if case .permissionResponse(let rid, let choice) = e.body, rid == requestId { return choice }
+        }
+        return locallyAnswered[requestId]
     }
 }
 
