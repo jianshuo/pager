@@ -43,6 +43,14 @@ export const BotSummary = z.object({
 });
 export type BotSummary = z.infer<typeof BotSummary>;
 
+// 创建一个"干活 bot"：起个用户名 + 绑一台机器 + 目录（B 期，backend=agent）。
+export const NewBotRequest = z.object({
+  name: Username,
+  machineId: z.string().min(1),
+  dir: z.string().min(1),
+});
+export type NewBotRequest = z.infer<typeof NewBotRequest>;
+
 // ---------- 好友 ----------
 
 export const AddFriendRequest = z.object({ userId: z.string().startsWith("usr_") });

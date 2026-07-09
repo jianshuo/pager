@@ -83,3 +83,12 @@ describe("index 汇总导出", () => {
     expect(typeof Event.parse).toBe("function");
   });
 });
+
+import { NewBotRequest } from "../src/index.js";
+describe("NewBotRequest", () => {
+  it("解析建 bot 请求（用户名归一化）", () => {
+    const r = NewBotRequest.parse({ name: "MyBot", machineId: "mch_x", dir: "/a" });
+    expect(r.name).toBe("mybot");
+    expect(r.machineId).toBe("mch_x");
+  });
+});

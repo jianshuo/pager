@@ -32,6 +32,8 @@ export const PermissionRequestBody = z.object({
   tool: z.string(),
   description: z.string(),
   options: z.array(PermissionChoice).min(1),
+  // 干活 bot 的操作审批：由服务端盖上 bot 主人的 userId，iOS 据此只让主人批。
+  owner_id: z.string().optional(),
 });
 export type PermissionRequestBody = z.infer<typeof PermissionRequestBody>;
 
