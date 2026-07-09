@@ -43,7 +43,7 @@ export class DirectoryDO extends DurableObject<Env> {
   private ensureBuiltinBots(): void {
     const builtins = [
       { id: "usr_bot_claude", name: "claude", backend: "claude", model: "claude-opus-4-8" },
-      { id: "usr_bot_chatgpt", name: "chatgpt", backend: "chatgpt", model: "gpt-5" },
+      { id: "usr_bot_chatgpt", name: "chatgpt", backend: "chatgpt", model: "gpt-4.1" },
     ];
     const now = nowSec();
     for (const b of builtins) {
@@ -51,7 +51,12 @@ export class DirectoryDO extends DurableObject<Env> {
         "INSERT OR IGNORE INTO users (user_id, username, pw_hash, created_at, kind) VALUES (?, ?, '', ?, 'bot')",
         b.id, b.name, now
       );
-      this.sql.exec("INSERT OR IGNORE INTO bots (user_id, backend, model) VALUES (?, ?, ?)", b.id, b.backend, b.model);
+      // 用 UPSERT：改代码里的默认 model 后，每次构造会把线上 bot 的 model/backend 同步过来（自愈）。
+      this.sql.exec(
+        `INSERT INTO bots (user_id, backend, model) VALUES (?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET backend = excluded.backend, model = excluded.model`,
+        b.id, b.backend, b.model
+      );
     }
   }
 

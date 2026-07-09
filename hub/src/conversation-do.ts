@@ -187,7 +187,8 @@ export class ConversationDO extends DurableObject<Env> {
         await this.patch({ conv, eventId: sealed.id, markdown: acc });
       }
       if (!acc) await this.patch({ conv, eventId: sealed.id, markdown: "（无回复）" });
-    } catch {
+    } catch (e) {
+      console.error(`[bot ${bot.username}] backend=${backend} model=${model} error=${(e as Error)?.message}`);
       await this.patch({ conv, eventId: sealed.id, markdown: `⚠️ ${bot.username} 出错了，稍后再试。` });
     }
   }
