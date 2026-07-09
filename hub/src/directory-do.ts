@@ -43,6 +43,14 @@ export class DirectoryDO extends DurableObject<Env> {
         return this.names(await req.json());
       case "POST /admin-delete-user":
         return this.adminDeleteUser(await req.json());
+      case "POST /lookup":
+        return this.lookup(await req.json());
+      case "POST /mint": {
+        const { userId } = await req.json<{ userId: string }>();
+        const exists = [...this.sql.exec("SELECT 1 FROM users WHERE user_id = ?", userId)][0];
+        if (!exists) return Response.json(null);
+        return Response.json({ token: this.mintSession(userId) });
+      }
       default:
         return new Response("not found", { status: 404 });
     }
@@ -117,6 +125,13 @@ export class DirectoryDO extends DurableObject<Env> {
     this.sql.exec("DELETE FROM sessions WHERE user_id = ?", row.user_id);
     this.sql.exec("DELETE FROM users WHERE username = ?", username);
     return Response.json({ ok: true, deleted: true, userId: row.user_id });
+  }
+
+  // 精确按用户名查 userId（运维/诊断用）
+  private lookup(body: { username: string }): Response {
+    const username = (body.username ?? "").trim().toLowerCase();
+    const row = [...this.sql.exec("SELECT user_id, username FROM users WHERE username = ?", username)][0];
+    return row ? Response.json({ userId: row.user_id, username: row.username }) : Response.json(null);
   }
 
   private mintSession(userId: string): string {

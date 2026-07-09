@@ -1,4 +1,4 @@
-import { SELF } from "cloudflare:test";
+import { SELF, env } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
 import { until } from "./util.js";
 
@@ -118,5 +118,21 @@ describe("router：群与拉人", () => {
     );
     expect(sys.event.body.text).toContain("r_grp_c");
     cw.ws.close();
+  });
+
+  // 回归：mira/jianshuo 事故——已删除/重注册留下的「幽灵 userId」不能被拉进群（否则真人进不来）
+  it("建群时无法解析的幽灵成员被过滤，只留创建者+真实成员", async () => {
+    const a = await register("r_ghost_a");
+    const real = await register("r_ghost_real");
+    const g = await (
+      await api("/api/groups", {
+        token: a.token,
+        body: { title: "防幽灵", members: [real.userId, "usr_ghost_deadbeef"] },
+      })
+    ).json<any>();
+    const conv = env.CONVERSATION.get(env.CONVERSATION.idFromName(g.id));
+    const members = await (await conv.fetch("https://do/members")).json<any[]>();
+    const ids = members.map((m) => m.userId).sort();
+    expect(ids).toEqual([a.userId, real.userId].sort()); // 幽灵 usr_ghost_deadbeef 不在其中
   });
 });

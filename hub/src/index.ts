@@ -94,6 +94,40 @@ export default {
       });
     }
 
+    // 运维/诊断：读某用户的真实状态（userId/好友/会话），用 CLIENT_TOKEN 保护。
+    if (path === "/api/admin/inspect" && req.method === "GET") {
+      if (!token || token !== env.CLIENT_TOKEN) return new Response("unauthorized", { status: 401 });
+      const username = url.searchParams.get("username") ?? "";
+      const who = await (
+        await directory(env).fetch("https://do/lookup", { method: "POST", body: JSON.stringify({ username }) })
+      ).json<{ userId: string; username: string } | null>();
+      if (!who) return Response.json({ error: "no such user", username }, { status: 404 });
+      const friends = await (await userStub(env, who.userId).fetch("https://do/friends")).json();
+      const conversations = await (await userStub(env, who.userId).fetch("https://do/conversations")).json();
+      return Response.json({ userId: who.userId, username: who.username, friends, conversations });
+    }
+    // 运维：为某用户名铸一个 session token（修数据/诊断用，CLIENT_TOKEN 保护）。
+    if (path === "/api/admin/mint-session" && req.method === "POST") {
+      if (!token || token !== env.CLIENT_TOKEN) return new Response("unauthorized", { status: 401 });
+      const { username } = await req.json<{ username: string }>();
+      const who = await (
+        await directory(env).fetch("https://do/lookup", { method: "POST", body: JSON.stringify({ username }) })
+      ).json<{ userId: string; username: string } | null>();
+      if (!who) return Response.json({ error: "no such user" }, { status: 404 });
+      const minted = await (
+        await directory(env).fetch("https://do/mint", { method: "POST", body: JSON.stringify({ userId: who.userId }) })
+      ).json();
+      return Response.json({ userId: who.userId, username: who.username, ...(minted as object) });
+    }
+    // 诊断：读某会话的成员名单
+    if (path.startsWith("/api/admin/conv-members/") && req.method === "GET") {
+      if (!token || token !== env.CLIENT_TOKEN) return new Response("unauthorized", { status: 401 });
+      const conv = decodeURIComponent(path.slice("/api/admin/conv-members/".length));
+      const members = await (await convStub(env, conv).fetch("https://do/members")).json();
+      const meta = await (await convStub(env, conv).fetch("https://do/meta")).json();
+      return Response.json({ conv, meta, members });
+    }
+
     // 其余全部需要有效 session
     const me = await resolveSession(env, token);
     if (!me) return new Response("unauthorized", { status: 401 });
@@ -202,9 +236,12 @@ async function directConversation(env: Env, me: Identity, body: { userId: string
 
 async function newGroup(env: Env, me: Identity, body: { title: string; members: string[] }): Promise<Response> {
   const conv = newId("cnv");
-  const ids = [...new Set([me.userId, ...body.members])];
-  const names = await resolveNames(env, ids);
-  const members = ids.map((id) => ({ userId: id, username: names.get(id) ?? id }));
+  const requested = [...new Set([me.userId, ...body.members])];
+  const names = await resolveNames(env, requested);
+  // 根因防御：只保留能在目录里解析出用户名的成员（永远含创建者自己）。
+  // 否则一个已删除/重注册导致的「幽灵 userId」会被拉进群，真人却进不来（见 mira/jianshuo 事故）。
+  const ids = requested.filter((id) => id === me.userId || names.has(id));
+  const members = ids.map((id) => ({ userId: id, username: id === me.userId ? me.username : names.get(id)! }));
   await convStub(env, conv).fetch("https://do/init", {
     method: "POST",
     body: JSON.stringify({ kind: "group", title: body.title, createdBy: me.userId, members }),
