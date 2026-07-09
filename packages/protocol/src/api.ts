@@ -27,8 +27,21 @@ export type AuthResponse = z.infer<typeof AuthResponse>;
 export const UserSummary = z.object({
   userId: z.string().startsWith("usr_"),
   username: z.string(),
+  kind: z.enum(["human", "bot"]).default("human"),
 });
 export type UserSummary = z.infer<typeof UserSummary>;
+
+// AI 成员的后端类型：claude/chatgpt 走 hub 直连 API；agent 走机器 daemon（B 期）。
+export const BotBackend = z.enum(["claude", "chatgpt", "agent"]);
+export type BotBackend = z.infer<typeof BotBackend>;
+
+export const BotSummary = z.object({
+  userId: z.string().startsWith("usr_"),
+  username: z.string(),
+  backend: BotBackend,
+  displayName: z.string(),
+});
+export type BotSummary = z.infer<typeof BotSummary>;
 
 // ---------- 好友 ----------
 

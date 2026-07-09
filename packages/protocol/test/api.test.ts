@@ -5,6 +5,8 @@ import {
   NewGroupRequest,
   ConversationSummary,
   DeviceRegistration,
+  BotSummary,
+  UserSummary,
   newId,
   Event,
 } from "../src/index.js";
@@ -48,6 +50,16 @@ describe("ConversationSummary", () => {
   });
   it("拒绝非法 kind", () => {
     expect(() => ConversationSummary.parse({ id: "x", kind: "channel" })).toThrow();
+  });
+});
+
+describe("bot 标记", () => {
+  it("BotSummary 解析", () => {
+    const b = BotSummary.parse({ userId: "usr_bot_claude", username: "claude", backend: "claude", displayName: "Claude" });
+    expect(b.backend).toBe("claude");
+  });
+  it("UserSummary kind 默认 human", () => {
+    expect(UserSummary.parse({ userId: "usr_1", username: "a" }).kind).toBe("human");
   });
 });
 
